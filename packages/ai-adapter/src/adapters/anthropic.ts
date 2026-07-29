@@ -1,0 +1,2 @@
+// Anthropic adapter wrapper
+export {};

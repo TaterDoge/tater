@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "references": [
+    { "path": "packages/ai-adapter" },
+    { "path": "packages/agent-core" },
+    { "path": "packages/agent-session" },
+    { "path": "packages/tools" },
+    { "path": "packages/storage" },
+    { "path": "packages/cli" }
+  ],
+  "files": [],
+  "compilerOptions": {
+    "strictNullChecks": true
+  }
+}

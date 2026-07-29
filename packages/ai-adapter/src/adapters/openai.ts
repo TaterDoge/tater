@@ -1,0 +1,2 @@
+// OpenAI adapter wrapper
+export {};

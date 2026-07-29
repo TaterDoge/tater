@@ -1,0 +1,98 @@
+#!/usr/bin/env sh
+
+set -eu
+
+echo "🔍 检查待提交文件..."
+
+STAGED_FILES=$(
+  git diff --cached --name-only --diff-filter=ACMR |
+    grep -E '\.(js|jsx|ts|tsx|mjs|cjs|mts|cts|json|jsonc|md|css|scss|less|vue)$' || true
+)
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "✅ 没有需要检查的代码文件"
+  exit 0
+fi
+
+echo "📝 待处理文件: $(printf '%s\n' "$STAGED_FILES" | wc -l | tr -d ' ') 个"
+printf '%s\n' "$STAGED_FILES" | sed 's/^/  - /'
+echo ""
+
+# 如果同一批文件存在未暂存修改，直接阻止提交，避免 pre-commit 自动修复后造成索引/工作区不一致
+CONFLICT_FILES=$(
+  printf '%s\n' "$STAGED_FILES" | while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if ! git diff --quiet -- "$file"; then
+      printf '%s\n' "$file"
+    fi
+  done
+)
+
+if [ -n "$CONFLICT_FILES" ]; then
+  echo "❌ 检测到以下已暂存文件同时存在未暂存修改："
+  printf '%s\n' "$CONFLICT_FILES" | sed 's/^/  - /'
+  echo ""
+  echo "为避免 pre-commit 自动修复时造成伪冲突，本次提交已中止。"
+  echo "请先处理这些文件后再提交，例如："
+  echo "  1. 先把修改全部暂存后再提交"
+  echo "  2. 或先提交一部分，再处理剩余改动"
+  exit 1
+fi
+
+echo "🔧 类型检查（全量）..."
+
+set +e
+CHECK_OUTPUT=$(bun run typecheck 2>&1)
+CHECK_EXIT_CODE=$?
+set -e
+
+if [ "$CHECK_EXIT_CODE" -eq 0 ]; then
+  echo "🔧 检查并修复暂存文件..."
+  set +e
+  CHECK_OUTPUT=$(printf '%s\n' "$STAGED_FILES" | tr '\n' '\0' | xargs -0 bunx biome check --write 2>&1)
+  CHECK_EXIT_CODE=$?
+  set -e
+fi
+
+# 重新暂存被自动修复的文件
+printf '%s\n' "$STAGED_FILES" | while IFS= read -r file; do
+  [ -n "$file" ] || continue
+  [ -f "$file" ] || continue
+  git add -- "$file"
+done
+
+echo ""
+echo "=== 🔍 代码检查结果 ==="
+
+if [ "$CHECK_EXIT_CODE" -eq 0 ]; then
+  echo "✅ 代码检查通过"
+  echo "🎉 Pre-commit 检查完成！"
+  exit 0
+fi
+
+echo "❌ 代码检查失败！"
+echo ""
+
+TS_ERRORS=$(printf '%s\n' "$CHECK_OUTPUT" | grep -E '(error TS[0-9]+|Type error:)' || true)
+
+if [ -n "$TS_ERRORS" ]; then
+  echo "📋 TypeScript 类型错误:"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  printf '%s\n' "$TS_ERRORS"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+else
+  echo "📋 Lint/格式错误（biome 输出）:"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  printf '%s\n' "$CHECK_OUTPUT"
+  echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+echo ""
+
+echo "🔧 修复建议:"
+echo "   1. 修复 TypeScript 类型错误（如有）"
+echo "   2. 运行 'bun run check' 查看完整错误"
+echo "   3. 运行 'bun run fix' 自动修复 lint/格式问题（会修改文件）"
+echo "   4. 修复后重新执行 git add"
+echo "   5. 再次提交"
+
+exit "$CHECK_EXIT_CODE"
