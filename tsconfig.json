@@ -6,7 +6,7 @@
     { "path": "packages/agent-session" },
     { "path": "packages/tools" },
     { "path": "packages/storage" },
-    { "path": "packages/cli" }
+    { "path": "packages/tui" }
   ],
   "files": [],
   "compilerOptions": {

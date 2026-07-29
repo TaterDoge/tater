@@ -1,5 +1,5 @@
 {
-  "name": "@tater/cli",
+  "name": "@tater/tui",
   "version": "0.0.1",
   "private": true,
   "type": "module",

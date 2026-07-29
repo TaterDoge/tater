@@ -38,16 +38,6 @@
         "zod": "catalog:",
       },
     },
-    "packages/cli": {
-      "name": "@tater/cli",
-      "version": "0.0.1",
-      "dependencies": {
-        "@opentui/core": "catalog:",
-        "@tanstack/ai": "catalog:",
-        "@tater/agent-core": "workspace:*",
-        "@tater/agent-session": "workspace:*",
-      },
-    },
     "packages/storage": {
       "name": "@tater/storage",
       "version": "0.0.1",
@@ -58,6 +48,16 @@
       "dependencies": {
         "@tater/agent-core": "workspace:*",
         "zod": "catalog:",
+      },
+    },
+    "packages/tui": {
+      "name": "@tater/tui",
+      "version": "0.0.1",
+      "dependencies": {
+        "@opentui/core": "catalog:",
+        "@tanstack/ai": "catalog:",
+        "@tater/agent-core": "workspace:*",
+        "@tater/agent-session": "workspace:*",
       },
     },
   },
@@ -149,11 +149,11 @@
 
     "@tater/ai-adapter": ["@tater/ai-adapter@workspace:packages/ai-adapter"],
 
-    "@tater/cli": ["@tater/cli@workspace:packages/cli"],
-
     "@tater/storage": ["@tater/storage@workspace:packages/storage"],
 
     "@tater/tools": ["@tater/tools@workspace:packages/tools"],
+
+    "@tater/tui": ["@tater/tui@workspace:packages/tui"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

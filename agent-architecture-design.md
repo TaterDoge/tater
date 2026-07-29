@@ -274,7 +274,7 @@ my-agent/
 │   ├── tools/               # 内置工具 (read/bash/edit/write/grep/find/ls)
 │   ├── storage/             # JSONL session 持久化
 │   ├── extensions/          # 扩展系统
-│   └── cli/                 # CLI 入口 + TUI (使用 @opentui/core)
+│   └── tui/                 # TUI 入口 (使用 @opentui/core)
 ├── package.json             # monorepo (bun workspaces)
 ├── bunfig.toml              # Bun 配置
 └── tsconfig.json
@@ -284,7 +284,7 @@ my-agent/
 
 ```
                     ┌──────────┐
-     运行时: Bun      │   cli    │ ← @opentui/core, @tanstack/ai
+     运行时: Bun      │   tui    │ ← @opentui/core, @tanstack/ai
                     └────┬─────┘
                          │
               ┌──────────┼──────────┐
@@ -312,7 +312,7 @@ my-agent/
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  cli (应用入口层)                                             │
+│  tui (应用入口层)                                             │
 │  - CLI 参数解析                                               │
 │  - TUI 渲染 (@opentui/core)                                  │
 │  - 交互/打印/RPC 三种模式                                      │
@@ -1137,12 +1137,12 @@ type ExtensionEvent =
   | { type: "session_shutdown" };
 ```
 
-### 4.6 cli — CLI + TUI 层
+### 4.6 tui — TUI 层
 
 #### 4.6.1 三种 Run Mode
 
 ```typescript
-// cli/main.ts
+// tui/main.ts
 async function main(args: string[]) {
   // 1. 解析 CLI 参数
   const parsed = parseArgs(args);
@@ -1168,7 +1168,7 @@ async function main(args: string[]) {
 #### 4.6.2 InteractiveMode（基于 @opentui/core）
 
 ```typescript
-// cli/modes/interactive.ts
+// tui/modes/interactive.ts
 import { createCliRenderer, type KeyEvent } from "@opentui/core";
 
 class InteractiveMode {
@@ -1262,7 +1262,7 @@ class InteractiveMode {
 #### 4.6.3 PrintMode（无 TUI）
 
 ```typescript
-// cli/modes/print.ts
+// tui/modes/print.ts
 async function runPrintMode(session: AgentSession, options: PrintOptions) {
   session.subscribe((event) => {
     if (event.type === "message_update" && event.message.role === "assistant") {
@@ -1286,7 +1286,7 @@ async function runPrintMode(session: AgentSession, options: PrintOptions) {
 使用 Bun 原生能力实现 RPC 服务端。
 
 ```typescript
-// cli/modes/rpc.ts
+// tui/modes/rpc.ts
 import type { AgentSession } from "@my/agent-session";
 
 async function runRpcMode(session: AgentSession) {
@@ -1536,12 +1536,12 @@ my-agent/
 │   │       ├── jsonl.ts            # JSONL 读写 (Bun.file / Bun.write)
 │   │       └── sqlite.ts           # 可选: Bun:sqlite 索引层
 │   │
-│   └── cli/                        # CLI + TUI
+│   └── tui/                        # TUI 应用入口
 │       ├── package.json
 │       ├── tsconfig.json
 │       └── src/
-│           ├── main.ts            # CLI 入口
-│           ├── cli/
+│           ├── main.ts            # TUI 入口
+│           ├── tui/
 │           │   ├── args.ts         # 参数解析
 │           │   └── initial-message.ts
 │           ├── modes/
@@ -1573,13 +1573,13 @@ my-agent/
 2. **agent-core**：实现 `Agent` + `AgentLoop` + `AgentTool` + `AgentEvent`
 3. **tools**：实现 `read` + `bash` + `edit` + `write` 四个核心工具（`bash` 用 `Bun.spawn()`，文件 IO 用 `Bun.file()`/`Bun.write()`）
 4. **agent-session**：实现 `AgentSession` + 基础 `SessionManager`（内存模式）
-5. **cli**：实现 `PrintMode`（stdout 输出，无 TUI）；用 `bun run` 直接执行 TS 源码
+5. **tui**：实现 `PrintMode`（stdout 输出，无 TUI）；用 `bun run` 直接执行 TS 源码
 
 ### Phase 2：交互式 TUI
 >
 > 目标：有完整交互式终端界面
 
-1. **cli/modes/interactive**：基于 `@opentui/core` 构建 TUI
+1. **tui/modes/interactive**：基于 `@opentui/core` 构建 TUI
    - 消息列表渲染
    - Markdown 渲染
    - 输入编辑器
@@ -1620,12 +1620,12 @@ my-agent/
 >
 > 目标：功能对标 Pi
 
-1. **cli/modes/rpc**：RPC 模式——用 `Bun.serve({ unix })` 起 Unix socket JSON-RPC 服务，事件流用 WebSocket 推送
+1. **tui/modes/rpc**：RPC 模式——用 `Bun.serve({ unix })` 起 Unix socket JSON-RPC 服务，事件流用 WebSocket 推送
 2. **agent-session**：Auto-retry（可重试错误自动重试）
 3. **agent-session**：Model cycling（Ctrl+P 切换 model）
 4. **agent-session**：Thinking level 管理
-5. **cli**：自动补全（slash commands + model names + file paths）
-6. **cli**：HTML 导出
+5. **tui**：自动补全（slash commands + model names + file paths）
+6. **tui**：HTML 导出
 7. **agent-session**：Context files（AGENTS.md 等自动加载）
 8. **打包发布**：用 `bun build --compile` 生成独立二进制
 
