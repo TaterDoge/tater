@@ -6,6 +6,13 @@
     "ultracite/biome/jest",
     "ultracite/biome/vitest"
   ],
+  "linter": {
+    "rules": {
+      "correctness": {
+        "noUndeclaredVariables": "off"
+      }
+    }
+  },
   "json": {
     "parser": {
       "allowComments": true

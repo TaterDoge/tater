@@ -4,6 +4,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "composite": true,
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "strictNullChecks": true
   },
   "include": ["src"],

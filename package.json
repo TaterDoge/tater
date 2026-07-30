@@ -14,8 +14,8 @@
     }
   },
   "scripts": {
-    "dev": "bun run packages/tui/src/main.ts",
-    "build": "bun build packages/tui/src/main.ts --compile --outfile dist/tater-agent",
+    "dev": "bun run packages/tui/src/main.tsx",
+    "build": "cd packages/tui && bun run build.ts",
     "typecheck": "bunx tsc --noEmit",
     "lint": "biome check",
     "lint:fix": "biome check --write",

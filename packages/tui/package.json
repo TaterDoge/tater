@@ -4,10 +4,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/main.ts"
+    ".": "./src/main.tsx"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@opentui/solid": "^0.4.5",
+    "solid-js": "1.9.12"
+  }
 }
