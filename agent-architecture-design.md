@@ -1,6 +1,6 @@
 # 类 Pi Agent 架构设计方案
 
-> 基于 Pi (pi-mono) 源码深度分析，使用 `@tanstack/ai` 替代 LLM 请求层，`@opentui/core` 替代 TUI 层，其余自主实现。
+> 基于 Pi (pi-mono) 源码深度分析，使用 Vercel AI SDK 替代 LLM 请求层，`@opentui/core` 替代 TUI 层，其余自主实现。
 
 ---
 
@@ -26,8 +26,8 @@
 │  AgentSession · SessionManager · Extensions · Compaction  │
 │  Tools(read/bash/edit/write) · SystemPrompt · Skills      │
 ├─────────────────────────────────────────────────────────┤
-│              agent-core (Agent Runtime)                   │  ← 运行时：状态机 + 事件 + 循环
-│  Agent · AgentLoop · AgentMessage · AgentTool · AgentEvent │
+│              agent-core (Agent Runtime)                   │  ← 运行时：状态、队列、事件映射
+│  Agent · AgentMessage · AgentTool · AgentEvent              │
 │  Steering/FollowUp队列 · Hooks · Harness                  │
 ├──────────────────┬──────────────────────────────────────┤
 │   tui (终端 UI)   │              ai (LLM SDK)              │  ← 基础设施层
@@ -172,9 +172,9 @@ Extension 通过 ExtensionContext 访问：
 
 | Pi 原生包 | 功能 | 你的替代方案 | 需自己实现的部分 |
 | ----------- | ------ | ------------- | ---------------- |
-| `pi-ai` | 多 Provider LLM 请求 | `@tanstack/ai` | Model 发现/注册、Auth 存储、OAuth 流程 |
+| `pi-ai` | 多 Provider LLM 请求 | Vercel AI SDK | Model 发现/注册、Auth 存储、OAuth 流程 |
 | `pi-tui` | 终端 UI 渲染 | `@opentui/core` | Markdown 渲染、Editor 组件、Autocomplete |
-| `pi-agent-core` | Agent 运行时 | **自己实现** | 全部 |
+| `pi-agent-core` | Agent 运行时 | AI SDK `ToolLoopAgent` + 薄封装 | Steering、Follow-up、应用事件映射 |
 | `pi-coding-agent` | 应用层 | **自己实现** | 全部 |
 | `storage/sqlite-node` | 持久化 | **Bun 内置 `bun:sqlite` + `Bun.file()`** | 存储层逻辑 |
 | `server` | RPC 服务 | **Bun.serve() / Bun IPC** | RPC 协议与 handler |
@@ -195,39 +195,58 @@ Extension 通过 ExtensionContext 访问：
 > | 环境变量 | `process.env` | `Bun.env`（同等） |
 > | 测试 | vitest | `bun test`（内置，也可保留 vitest） |
 
-### 2.1 `@tanstack/ai` 提供的能力
+### 2.1 Vercel AI SDK 提供的能力
+
+本方案使用 `ai` 包的 `ToolLoopAgent` 管理内层 Tool Loop，并通过 `@ai-sdk/openai`、`@ai-sdk/anthropic` 等 Provider 包连接模型。
 
 ```typescript
-// 核心活动函数
-chat({
-  adapter: openaiText("gpt-5.2"),    // 或 anthropicText("claude-sonnet-4-5")
-  messages: [...],                   // UIMessage[] | ModelMessage[]
-  systemPrompts: ["..."],             // 系统提示
-  tools: {                           // 工具定义
-    getWeather: toolDefinition({
-      name: "getWeather",
-      description: "...",
-      parameters: z.object({...}),
-      execute: async (args) => {...},
+import { ToolLoopAgent, isStepCount, tool } from "ai";
+import { openai } from "@ai-sdk/openai";
+import { z } from "zod";
+
+const agent = new ToolLoopAgent({
+  model: openai("gpt-5.2"),
+  instructions: "You are a coding agent.",
+  tools: {
+    read: tool({
+      description: "Read a file",
+      inputSchema: z.object({ path: z.string() }),
+      execute: ({ path }) => Bun.file(path).text(),
     }),
   },
-  stopWhen: "toolCall" | hasToolCall, // 停止条件
-  maxSteps: 10,                      // 最大循环步数
-  middleware: [{                     // 中间件
-    beforeToolCall: async (ctx) => {...},
-    afterToolCall: async (ctx) => {...},
-    onStepFinish: async (ctx) => {...},
-  }],
-})
-// 返回: { textStream, fullText, text, usage, steps, ... }
+  stopWhen: isStepCount(20),
+  prepareStep: ({ messages }) => ({
+    messages: [...messages, ...steeringQueue.splice(0)],
+  }),
+  onStepEnd: persistStep,
+});
+
+const result = await agent.stream({ messages });
+for await (const part of result.fullStream) {
+  // text/thinking/tool-call/tool-result/error 等细粒度事件
+}
 ```
 
-**关键差异**：
+AI SDK 直接提供：
 
-- Pi 的 `streamFn` 返回 `AssistantMessageEventStream`（细粒度事件流），`@tanstack/ai` 的 `chat()` 返回高层次结果
-- Pi 的 agent loop 是自己实现的（完全控制 steering/followUp/prepareNextTurn），`@tanstack/ai` 有内置 loop（`stopWhen`/`maxSteps`）
-- Pi 有 `AgentMessage` 自定义消息扩展，`@tanstack/ai` 用 `UIMessage`/`ModelMessage`
-- Pi 的 tool 用 TypeBox schema，`@tanstack/ai` 用 Zod schema
+- 多 Provider 的统一 `LanguageModel` 接口
+- `ToolLoopAgent` 内层 Tool Loop
+- `prepareStep`：逐轮覆盖 model、messages、instructions、activeTools、providerOptions
+- `stopWhen`：步数、指定 Tool Call 或自定义停止条件
+- Tool schema 校验、并行执行、审批和 Tool Call 修复
+- `fullStream`、`onStepStart`、`onStepEnd`、`onToolExecutionStart/End`
+- `AbortSignal`、usage 和 finish reason
+
+仍需自己实现：
+
+- Steering 队列：在 `prepareStep` 中注入下一轮模型调用
+- Follow-up 队列：一次 `ToolLoopAgent` 结束后，由 `AgentSession` 再发起一次调用
+- `AgentMessage` 与 `ModelMessage` 的边界转换
+- Session、Compaction、Extension、TUI
+
+**关键决策**：不再把 SDK 包装成 Pi 风格 `StreamFn`，也不重复实现 Tool Loop。`agent-core` 只保留会话级状态、队列和事件映射。
+
+---
 
 ### 2.2 `@opentui/core` 提供的能力
 
@@ -266,515 +285,215 @@ renderer.keyInput.on("keypress", (event: KeyEvent) => {
 ### 3.1 包结构
 
 ```
-my-agent/
+tater/
 ├── packages/
-│   ├── ai-adapter/          # @tanstack/ai → 统一 StreamFn 适配层
-│   ├── agent-core/          # Agent 运行时 (自己实现，对应 pi-agent-core)
-│   ├── agent-session/       # 会话管理 + 应用层核心 (自己实现)
-│   ├── tools/               # 内置工具 (read/bash/edit/write/grep/find/ls)
-│   ├── storage/             # JSONL session 持久化
-│   ├── extensions/          # 扩展系统
-│   └── tui/                 # TUI 入口 (使用 @opentui/core)
-├── package.json             # monorepo (bun workspaces)
-├── bunfig.toml              # Bun 配置
+│   ├── ai-adapter/          # Provider 解析、ModelRuntime、Auth/OAuth
+│   ├── agent-core/          # ToolLoopAgent 薄封装、消息与队列
+│   ├── agent-session/       # Session、Compaction、Extensions
+│   ├── tools/               # read/bash/edit/write/grep/find/ls
+│   ├── storage/             # JSONL + 可选 SQLite 索引
+│   └── tui/                 # @opentui/core 交互/打印/RPC 模式
+├── package.json
+├── bunfig.toml
 └── tsconfig.json
 ```
 
-### 3.2 依赖关系图
+### 3.2 依赖关系
 
 ```
-                    ┌──────────┐
-     运行时: Bun      │   tui    │ ← @opentui/core, @tanstack/ai
-                    └────┬─────┘
-                         │
-              ┌──────────┼──────────┐
-              ▼          ▼          ▼
-        ┌─────────┐ ┌──────────┐ ┌──────────┐
-        │ session  │ │ tools   │ │extensions│
-        └────┬────┘ └────┬────┘ └────┬─────┘
-             │           │           │
-             └─────┬─────┴───────────┘
-                   ▼
-            ┌─────────────┐
-            │ agent-core  │ ← ai-adapter
-            └──────┬──────┘
-                   │
-            ┌──────┴──────┐
-            │  ai-adapter │ ← @tanstack/ai
-            └─────────────┘
-
-  存储层使用 Bun.file() / Bun.write() / bun:sqlite
-  RPC 服务使用 Bun.serve() / Bun.spawn()
-  子进程用 Bun.spawn() 替代 child_process
+                    ┌──────────────┐
+                    │     tui      │ ← @opentui/core
+                    └──────┬───────┘
+                           ▼
+                    ┌──────────────┐
+                    │agent-session │ ← 持久化、压缩、扩展
+                    └──────┬───────┘
+                           ▼
+                    ┌──────────────┐
+                    │  agent-core  │ ← ToolLoopAgent + 队列
+                    └──────┬───────┘
+                     ┌─────┴─────┐
+                     ▼           ▼
+              ┌────────────┐ ┌────────┐
+              │ ai-adapter │ │ tools  │
+              └─────┬──────┘ └────────┘
+                    ▼
+       Vercel AI SDK + @ai-sdk/* providers
 ```
+
+依赖方向保持单向：
+
+- `ai-adapter` 提供 `LanguageModel`，不控制 Agent Loop
+- `tools` 提供 AI SDK Tool 定义
+- `agent-core` 创建并运行 `ToolLoopAgent`
+- `agent-session` 处理跨调用能力
+- `tui` 只消费 Session 事件
 
 ### 3.3 层级职责
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  tui (应用入口层)                                             │
-│  - CLI 参数解析                                               │
-│  - TUI 渲染 (@opentui/core)                                  │
-│  - 交互/打印/RPC 三种模式                                      │
-│  - 键盘事件 → AgentSession API                                 │
-├─────────────────────────────────────────────────────────────┤
-│  agent-session (会话层)                                       │
-│  - AgentSession: 共享会话核心                                  │
-│  - SessionManager: JSONL 持久化 + 分支/fork/resume            │
-│  - SettingsManager: 分层配置                                  │
-│  - Compaction: 上下文压缩                                      │
-│  - SystemPrompt 构建                                          │
-│  - Skills / PromptTemplates                                   │
-│  - ModelRuntime: model 发现 + auth                            │
-├─────────────────────────────────────────────────────────────┤
-│  agent-core (运行时层)                                        │
-│  - Agent: 有状态运行时                                         │
-│  - AgentLoop: 核心循环                                        │
-│  - AgentMessage: 双层消息抽象                                  │
-│  - AgentTool: 工具定义 + 执行                                  │
-│  - AgentEvent: 生命周期事件                                   │
-│  - Steering/FollowUp 队列                                     │
-│  - Hooks: beforeToolCall/afterToolCall/shouldStopAfterTurn   │
-├─────────────────────────────────────────────────────────────┤
-│  ai-adapter (LLM 适配层)                                      │
-│  - @tanstack/ai chat() → StreamFn (Pi 兼容的事件流)           │
-│  - Provider adapter 注册 (openai/anthropic/google/...)        │
-│  - Model 元数据管理                                           │
-│  - Auth/OAuth 存储与刷新                                      │
-├─────────────────────────────────────────────────────────────┤
-│  @tanstack/ai (外部依赖)                @opentui/core (外部)   │
-│  - chat() / streamText               - createCliRenderer     │
-│  - toolDefinition                    - Renderable 系统       │
-│  - adapters (openai/anthropic/...)   - KeyEvent 输入        │
-│  - middleware                        - 渲染循环              │
-└─────────────────────────────────────────────────────────────┘
-```
+| 层 | 职责 | 不负责 |
+| --- | --- | --- |
+| `ai-adapter` | Provider、模型解析、API key、OAuth | Tool Loop、事件状态机 |
+| `agent-core` | `ToolLoopAgent` 配置、AgentMessage、Steering/Follow-up、事件映射 | Session 文件、TUI |
+| `agent-session` | 持久化、Compaction、Retry、Extensions、System Prompt | Provider 流解析 |
+| `tools` | Tool schema、执行、输出截断、文件写队列 | 循环控制 |
+| `tui` | 输入与渲染 | Agent 业务逻辑 |
+
+该结构刻意不建立 `StreamFn` 和第二套 Tool 执行器，避免与 AI SDK 重复。
 
 ---
 
 ## 4. 各模块详细设计
 
-### 4.1 ai-adapter — LLM 适配层
+### 4.1 ai-adapter — Provider 与认证层
 
-**目标**：将 `@tanstack/ai` 的 `chat()` 封装为 agent-core 需要的 `StreamFn` 接口。
-
-#### 4.1.1 StreamFn 契约
-
-```typescript
-// agent-core 定义的流式函数契约
-type StreamFn = (
-  model: ModelConfig,
-  context: LLMContext,
-  options?: StreamOptions,
-) => Promise<MessageEventStream>;
-
-interface LLMContext {
-  systemPrompt: string;
-  messages: LLMMessage[];     // 纯 LLM 消息（已 convertToLlm）
-  tools: AgentTool[];
-}
-
-interface ModelConfig {
-  provider: string;           // "openai" | "anthropic" | "google" | ...
-  modelId: string;             // "gpt-5.2" | "claude-sonnet-4-5" | ...
-  reasoning?: boolean;
-  contextWindow: number;
-  // ...
-}
-```
-
-#### 4.1.2 适配器实现
-
-```typescript
-// ai-adapter/stream-fn.ts
-import { chat } from "@tanstack/ai";
-import { openaiText, anthropicText } from "@tanstack/ai-openai"; // 各 provider adapter
-
-const adapterRegistry = new Map<string, (modelId: string) => any>();
-adapterRegistry.set("openai", (id) => openaiText(id));
-adapterRegistry.set("anthropic", (id) => anthropicText(id));
-// ... 更多 provider
-
-export function createStreamFn(modelRuntime: ModelRuntime): StreamFn {
-  return async (model, context, options) => {
-    const adapterFactory = adapterRegistry.get(model.provider);
-    if (!adapterFactory) throw new Error(`Unknown provider: ${model.provider}`);
-
-    const apiKey = await modelRuntime.getApiKey(model.provider);
-
-    // 将 agent-core 的 tools 转换为 @tanstack/ai 的 toolDefinition
-    const tanstackTools = convertToolsToTanstack(context.tools);
-
-    // 将 LLMContext.messages 转换为 @tanstack/ai 的 messages 格式
-    const tanstackMessages = convertMessagesToTanstack(context.messages);
-
-    const result = chat({
-      adapter: adapterFactory(model.modelId),
-      messages: tanstackMessages,
-      systemPrompts: [context.systemPrompt],
-      tools: tanstackTools,
-      stopWhen: "toolCall",         // 有 tool call 时停止，agent-core 自己管理循环
-      apiKey,
-      signal: options?.signal,
-      // 不用 @tanstack/ai 的 maxSteps 内置循环
-    });
-
-    // 将 @tanstack/ai 的结果流转换为 agent-core 期望的事件流
-    return wrapTanstackResultAsStream(result, model);
-  };
-}
-```
-
-#### 4.1.3 事件流转换
-
-```typescript
-// 将 @tanstack/ai 的高层次结果转换为细粒度事件流
-function wrapTanstackResultAsStream(result, model): MessageEventStream {
-  // @tanstack/ai 的 textStream 是 AsyncIterable<string>
-  // 需要包装为 { type: "text_start" } / { type: "text_delta", delta } / ... 事件
-  // 以及 tool_call 相关事件
-
-  // 关键：@tanstack/ai 的 stream 粒度可能不如 Pi 的 AssistantMessageEventStream 细
-  // 需要根据实际 API 补充：
-  // - thinking_start/delta/end (如果 provider 支持 reasoning)
-  // - toolcall_start/delta/end
-  // - done/error (附带 usage 和 stopReason)
-}
-```
-
-#### 4.1.4 ModelRuntime
+`ai-adapter` 只把应用的 `ModelConfig` 解析为 AI SDK `LanguageModel`，不包装 `streamText()`，也不拥有 Agent Loop。
 
 ```typescript
 // ai-adapter/model-runtime.ts
-class ModelRuntime {
-  // Model 发现：从 provider catalog 或本地缓存加载可用模型
-  async getAvailable(): Promise<ModelConfig[]>;
+import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
+import type { LanguageModel } from "ai";
 
-  // 按 provider + modelId 获取模型
-  getModel(provider: string, modelId: string): ModelConfig | undefined;
+const providers = {
+  openai,
+  anthropic,
+} as const;
 
-  // Auth 管理
-  getApiKey(provider: string): Promise<string | undefined>;
-  hasConfiguredAuth(provider: string): boolean;
-  isUsingOAuth(provider: string): boolean;
+export interface ModelConfig {
+  provider: keyof typeof providers;
+  modelId: string;
+  contextWindow: number;
+  reasoning?: boolean;
+}
 
-  // OAuth 流程 (需要自己实现)
-  async login(provider: string): Promise<void>;
-  async refresh(provider: string): Promise<void>;
+export function resolveModel(config: ModelConfig): LanguageModel {
+  return providers[config.provider](config.modelId);
 }
 ```
 
-**你需要自己实现的部分**：
+`ModelRuntime` 继续负责：
 
-- Model catalog 管理（每个 provider 的可用模型列表、context window、cost 等元数据）
-- API key 存储（`~/.my-agent/auth.json`）
-- OAuth 流程（GitHub Copilot、Anthropic 等需要 OAuth 的 provider）
-- Provider adapter 注册表
+- Model catalog 与元数据
+- `~/.tater/auth.json` 凭据
+- API key 环境变量/本地凭据解析
+- 需要时的 OAuth 登录与刷新
 
-### 4.2 agent-core — Agent 运行时
+Provider 官方包自行读取标准环境变量。只有 OAuth 或自定义凭据存储需要额外注入 Provider 配置。
 
-这是你**完全自己实现**的核心层，对应 Pi 的 `pi-agent-core`。
+### 4.2 agent-core — AI SDK Agent 薄封装
 
-#### 4.2.1 AgentMessage 双层抽象
+#### 4.2.1 AgentMessage 边界
+
+内部消息仍与模型消息分离：
 
 ```typescript
-// agent-core/types.ts
+import type { ModelMessage } from "ai";
 
-// 基础 LLM 消息类型 (与 @tanstack/ai 对齐)
-interface UserMessage { role: "user"; content: Content[]; timestamp: number; }
-interface AssistantMessage {
-  role: "assistant";
-  content: AssistantContent[];  // text | thinking | toolCall
-  stopReason: "stop" | "length" | "toolUse" | "error" | "aborted";
-  usage: Usage;
-  errorMessage?: string;
-  timestamp: number;
-}
-interface ToolResultMessage {
-  role: "toolResult";
-  toolCallId: string;
-  toolName: string;
-  content: Content[];
-  isError: boolean;
-  timestamp: number;
-}
-type LLMMessage = UserMessage | AssistantMessage | ToolResultMessage;
+interface CustomAgentMessages {}
 
-// 自定义消息扩展 (declaration merging)
-interface CustomAgentMessages {}  // 空接口，应用层扩展
+type AgentMessage =
+  | UserMessage
+  | AssistantMessage
+  | ToolResultMessage
+  | CustomAgentMessages[keyof CustomAgentMessages];
 
-// AgentMessage = LLM 消息 + 自定义消息
-type AgentMessage = LLMMessage | CustomAgentMessages[keyof CustomAgentMessages];
+type ConvertToModelMessages = (
+  messages: AgentMessage[],
+) => ModelMessage[] | Promise<ModelMessage[]>;
 ```
 
-应用层扩展示例：
+Session 可以保存 Compaction、Extension 和 UI 专用消息；调用模型前由 `convertToModelMessages` 过滤并转换。
+
+#### 4.2.2 Tool 定义
+
+直接采用 AI SDK 的 `tool()` 与 Zod，不再维护 `AgentTool → SDK Tool` 转换层：
 
 ```typescript
-// agent-session/messages.ts
-declare module "@my/agent-core" {
-  interface CustomAgentMessages {
-    bashExecution: BashExecutionMessage;
-    compactionSummary: CompactionSummaryMessage;
-    custom: CustomMessage;       // extension 注册的自定义消息
-  }
-}
+import { tool } from "ai";
+import { z } from "zod";
+
+export const readTool = tool({
+  description: "Read a file",
+  inputSchema: z.object({
+    path: z.string(),
+    offset: z.number().optional(),
+    limit: z.number().optional(),
+  }),
+  execute: async ({ path, offset = 0, limit }) => {
+    const lines = (await Bun.file(path).text()).split("\n");
+    return lines.slice(offset, limit ? offset + limit : undefined).join("\n");
+  },
+});
 ```
 
-#### 4.2.2 AgentTool 定义
+AI SDK 默认并行执行同一 Step 的 Tool Calls。需要串行的文件修改在 `edit`/`write` 内共享一个 mutation queue，不为此重写循环。
+
+#### 4.2.3 Agent 生命周期事件
+
+`fullStream` 与回调映射为应用事件：
+
+| AI SDK | AgentEvent |
+| --- | --- |
+| Agent 调用开始 | `agent_start` |
+| `onStepStart` | `turn_start` |
+| `fullStream` text/reasoning delta | `message_update` |
+| `onToolExecutionStart` | `tool_execution_start` |
+| Tool preliminary/result part | `tool_execution_update/end` |
+| `onStepEnd` | `turn_end` |
+| Stream 完成 | `agent_end` |
+
+`AgentSession` 订阅这些应用事件，TUI 和存储层无需依赖 AI SDK 的原始类型。
+
+#### 4.2.4 Steering
+
+Steering 消息进入队列，并在当前 Tool 批次完成后的下一次模型调用前注入：
 
 ```typescript
-// agent-core/types.ts
-interface AgentTool<TParams = any, TDetails = any> {
-  name: string;
-  description: string;
-  parameters: ZodSchema<TParams>;    // 用 Zod (与 @tanstack/ai 对齐)
-  label: string;                      // UI 显示名
+const steeringQueue: ModelMessage[] = [];
 
-  // 可选：参数预处理 (兼容旧格式参数)
-  prepareArguments?: (args: unknown) => TParams;
-
-  // 执行 (throw on error, 不要在 content 中编码错误)
-  execute: (
-    toolCallId: string,
-    params: TParams,
-    signal?: AbortSignal,
-    onUpdate?: (partialResult: AgentToolResult<TDetails>) => void,
-  ) => Promise<AgentToolResult<TDetails>>;
-
-  // 执行模式覆盖
-  executionMode?: "sequential" | "parallel";
-}
-
-interface AgentToolResult<T = any> {
-  content: (TextContent | ImageContent)[];  // 返回给 LLM 的内容
-  details: T;                                  // UI 渲染用的结构化数据
-  usage?: Usage;
-  terminate?: boolean;                         // 暗示 agent 应在此批次后停止
-  addedToolNames?: string[];                   // 动态注册的新工具
-}
+const agent = new ToolLoopAgent({
+  model,
+  tools,
+  prepareStep({ messages }) {
+    const steering = steeringQueue.splice(0);
+    return steering.length ? { messages: [...messages, ...steering] } : undefined;
+  },
+});
 ```
 
-#### 4.2.3 AgentEvent 生命周期
+这与 Pi 的核心语义一致：不会取消已经产生的 Tool Calls，也不会跳过当前 Tool 执行。
+
+#### 4.2.5 Follow-up
+
+Follow-up 不属于内层 Tool Loop，只需在一次 Agent 调用自然结束后继续：
 
 ```typescript
-// agent-core/types.ts
-type AgentEvent =
-  // Agent 生命周期
-  | { type: "agent_start" }
-  | { type: "agent_end"; messages: AgentMessage[] }
-  // Turn 生命周期 (一轮 = 一次 assistant 响应 + 工具调用)
-  | { type: "turn_start" }
-  | { type: "turn_end"; message: AgentMessage; toolResults: ToolResultMessage[] }
-  // 消息生命周期
-  | { type: "message_start"; message: AgentMessage }
-  | { type: "message_update"; message: AgentMessage; rawEvent?: unknown }
-  | { type: "message_end"; message: AgentMessage }
-  // 工具执行生命周期
-  | { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
-  | { type: "tool_execution_update"; toolCallId: string; toolName: string; partialResult: any }
-  | { type: "tool_execution_end"; toolCallId: string; toolName: string; result: any; isError: boolean };
-```
-
-#### 4.2.4 Agent 类（有状态运行时）
-
-```typescript
-// agent-core/agent.ts
-class Agent {
-  // 状态
-  get state(): AgentState;
-  // systemPrompt, model, thinkingLevel, tools, messages
-  // isStreaming, streamingMessage, pendingToolCalls, errorMessage
-
-  // 订阅事件
-  subscribe(listener: (event: AgentEvent, signal: AbortSignal) => void | Promise<void>): () => void;
-
-  // 核心操作
-  prompt(input: string | AgentMessage | AgentMessage[]): Promise<void>;
-  continue(): Promise<void>;
-
-  // 消息队列
-  steer(message: AgentMessage): void;      // 当前 turn 的 tool calls 执行完后注入
-  followUp(message: AgentMessage): void;   // agent 本应停止时注入
-  clearAllQueues(): void;
-  hasQueuedMessages(): boolean;
-
-  // 控制
-  abort(): void;
-  waitForIdle(): Promise<void>;
-  reset(): void;
-
-  // 配置 (构造时设置)
-  convertToLlm: (messages: AgentMessage[]) => LLMMessage[] | Promise<LLMMessage[]>;
-  transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
-  streamFn: StreamFn;
-  getApiKey?: (provider: string) => Promise<string | undefined>;
-
-  // Hooks
-  beforeToolCall?: (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
-  afterToolCall?: (ctx: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
-  shouldStopAfterTurn?: (ctx: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
-  prepareNextTurn?: (ctx: PrepareNextTurnContext) => AgentLoopTurnUpdate | undefined | Promise<...>;
-  getSteeringMessages?: () => Promise<AgentMessage[]>;
-  getFollowUpMessages?: () => Promise<AgentMessage[]>;
-}
-```
-
-#### 4.2.5 Agent Loop 实现
-
-```typescript
-// agent-core/agent-loop.ts
-async function runLoop(
-  context: AgentContext,
-  newMessages: AgentMessage[],
-  config: AgentLoopConfig,
-  signal: AbortSignal | undefined,
-  emit: (event: AgentEvent) => Promise<void>,
-  streamFn: StreamFn,
-): Promise<void> {
-  let currentContext = context;
-  let firstTurn = true;
-  let pendingMessages = (await config.getSteeringMessages?.()) || [];
-
-  // 外层循环：处理 follow-up
+async function run(messages: ModelMessage[]) {
   while (true) {
-    let hasMoreToolCalls = true;
+    await consume(await agent.stream({ messages }));
 
-    // 内层循环：处理 tool calls + steering
-    while (hasMoreToolCalls || pendingMessages.length > 0) {
-      if (!firstTurn) await emit({ type: "turn_start" });
-      else firstTurn = false;
-
-      // 注入 pending 消息
-      for (const msg of pendingMessages) {
-        await emit({ type: "message_start", message: msg });
-        await emit({ type: "message_end", message: msg });
-        currentContext.messages.push(msg);
-        newMessages.push(msg);
-      }
-      pendingMessages = [];
-
-      // 1. 流式获取 assistant 响应 (LLM 调用边界)
-      //    transformContext → convertToLlm → streamFn
-      const message = await streamAssistantResponse(currentContext, config, signal, emit, streamFn);
-      newMessages.push(message);
-
-      // 错误/中止 → 直接结束
-      if (message.stopReason === "error" || message.stopReason === "aborted") {
-        await emit({ type: "turn_end", message, toolResults: [] });
-        await emit({ type: "agent_end", messages: newMessages });
-        return;
-      }
-
-      // 2. 提取并执行 tool calls
-      const toolCalls = message.content.filter(c => c.type === "toolCall");
-      const toolResults: ToolResultMessage[] = [];
-      hasMoreToolCalls = false;
-
-      if (toolCalls.length > 0) {
-        const batch = message.stopReason === "length"
-          ? await failTruncatedToolCalls(toolCalls, emit)  // 截断 → 全标错
-          : await executeToolCalls(currentContext, message, config, signal, emit);
-
-        toolResults.push(...batch.messages);
-        hasMoreToolCalls = !batch.terminate;
-
-        for (const result of toolResults) {
-          currentContext.messages.push(result);
-          newMessages.push(result);
-        }
-      }
-
-      await emit({ type: "turn_end", message, toolResults });
-
-      // 3. prepareNextTurn (可切换 model/context/thinking)
-      const nextTurn = await config.prepareNextTurn?.({ message, toolResults, context: currentContext, newMessages });
-      if (nextTurn) {
-        currentContext = nextTurn.context ?? currentContext;
-        config = { ...config, model: nextTurn.model ?? config.model };
-      }
-
-      // 4. shouldStopAfterTurn?
-      if (await config.shouldStopAfterTurn?.({ message, toolResults, context: currentContext, newMessages })) {
-        await emit({ type: "agent_end", messages: newMessages });
-        return;
-      }
-
-      // 5. 拉取 steering 消息
-      pendingMessages = (await config.getSteeringMessages?.()) || [];
-    }
-
-    // 拉取 follow-up 消息
-    const followUps = (await config.getFollowUpMessages?.()) || [];
-    if (followUps.length > 0) {
-      pendingMessages = followUps;
-      continue;
-    }
-    break;
+    const followUps = followUpQueue.splice(0);
+    if (followUps.length === 0) return;
+    messages.push(...followUps);
   }
-
-  await emit({ type: "agent_end", messages: newMessages });
 }
 ```
 
-#### 4.2.6 Tool 执行（并行/顺序）
+该外层循环只处理跨调用消息，不执行 Tool，也不解析 Provider 流。
 
-```typescript
-// agent-core/agent-loop.ts (续)
+#### 4.2.6 动态调整与停止
 
-async function executeToolCalls(context, assistantMessage, config, signal, emit) {
-  const toolCalls = assistantMessage.content.filter(c => c.type === "toolCall");
+- `prepareStep` 替代 `prepareNextTurn` 和 `transformContext`
+- `stopWhen` 替代 `shouldStopAfterTurn` 的常见情况
+- `AbortController` 负责立即中止
+- `repairToolCall` 负责参数解析失败后的修复
+- `toolApproval` 负责高风险 Tool 的人工审批
+- `isStepCount(20)` 是默认安全上限，可由 Settings 覆盖
 
-  // 检查是否有工具要求顺序执行
-  const hasSequential = toolCalls.some(tc =>
-    context.tools?.find(t => t.name === tc.name)?.executionMode === "sequential"
-  );
+仅当出现 AI SDK 无法表达的真实需求时，才增加自定义控制，不预先复制 Pi 的完整状态机。
 
-  if (config.toolExecution === "sequential" || hasSequential) {
-    return executeSequential(context, assistantMessage, toolCalls, config, signal, emit);
-  }
-  return executeParallel(context, assistantMessage, toolCalls, config, signal, emit);
-}
-
-// 并行模式：先顺序准备（验证+hook），再并发执行
-async function executeParallel(context, assistantMessage, toolCalls, config, signal, emit) {
-  const prepared = [];
-
-  // 阶段 1：顺序准备
-  for (const toolCall of toolCalls) {
-    await emit({ type: "tool_execution_start", toolCallId: toolCall.id, toolName: toolCall.name, args: toolCall.arguments });
-
-    const prep = await prepareToolCall(context, assistantMessage, toolCall, config, signal);
-    if (prep.kind === "immediate") {
-      // 验证失败或被 block → 立即产出错误结果
-      await emit({ type: "tool_execution_end", toolCallId: toolCall.id, result: prep.result, isError: true });
-      prepared.push({ finalized: { toolCall, result: prep.result, isError: true } });
-    } else {
-      // 准备好可执行
-      prepared.push(async () => {
-        const executed = await executePreparedTool(prep, signal, emit);
-        const finalized = await finalizeToolCall(context, assistantMessage, prep, executed, config, signal);
-        await emit({ type: "tool_execution_end", toolCallId: toolCall.id, result: finalized.result, isError: finalized.isError });
-        return finalized;
-      });
-    }
-    if (signal?.aborted) break;
-  }
-
-  // 阶段 2：并发执行
-  const finalized = await Promise.all(
-    prepared.map(p => typeof p === "function" ? p() : Promise.resolve(p))
-  );
-
-  // 阶段 3：按源顺序产出 toolResult 消息
-  const messages = finalized.map(f => createToolResultMessage(f));
-  for (const msg of messages) {
-    await emit({ type: "message_start", message: msg });
-    await emit({ type: "message_end", message: msg });
-  }
-
-  return { messages, terminate: finalized.every(f => f.result.terminate === true) };
-}
-```
+---
 
 ### 4.3 agent-session — 会话层
 
@@ -929,8 +648,8 @@ class SettingsManager {
 
   // 配置文件层级（优先级从高到低）：
   // 1. CLI 参数 (--model, --thinking, ...)
-  // 2. Project settings (.my-agent/settings.json)
-  // 3. Global settings (~/.my-agent/settings.json)
+  // 2. Project settings (.tater/settings.json)
+  // 3. Global settings (~/.tater/settings.json)
 
   getDefaultProvider(): string | undefined;
   getDefaultModel(): string | undefined;
@@ -1335,349 +1054,202 @@ function getSocketPath(): string {
 
 ## 5. 数据流与核心循环
 
-### 5.1 一次完整交互的数据流
+### 5.1 一次完整交互
 
 ```
-用户输入 "帮我重构 auth.ts"
-    │
-    ▼
-InteractiveMode.handleKeyPress(Enter)
-    │
-    ▼
-AgentSession.prompt("帮我重构 auth.ts")
-    │
-    ├── 1. 扩展命令检查 (/command)
-    ├── 2. 扩展 input 事件拦截
-    ├── 3. Skill/Template 展开
-    ├── 4. 流式中 → steer/followUp 排队
-    ├── 5. Model + Auth 验证
-    ├── 6. Compaction 检查
-    ├── 7. 构建 messages 数组 (user msg + pending custom msgs)
-    ├── 8. 扩展 before_agent_start (可注入 custom msg / 修改 system prompt)
-    │
-    └── _runAgentPrompt(messages)
-         │
-         └── Agent.prompt(messages)
-              │
-              └── runAgentLoop(messages, context, config, emit, signal, streamFn)
-                   │
-                   ├── emit agent_start
-                   ├── emit turn_start
-                   ├── emit message_start (user msg)
-                   ├── emit message_end (user msg)
-                   │
-                   └── runLoop(context, newMessages, config, signal, emit, streamFn)
-                        │
-                        ├── streamAssistantResponse()
-                        │    ├── transformContext(messages)  ← AgentMessage[] → AgentMessage[]
-                        │    ├── convertToLlm(messages)       ← AgentMessage[] → LLMMessage[]
-                        │    ├── streamFn(model, llmContext, options)  ← 调 @tanstack/ai chat()
-                        │    │    └── @tanstack/ai → provider API → 流式响应
-                        │    ├── emit message_start (partial assistant msg)
-                        │    ├── emit message_update (text_delta, thinking_delta, toolcall_delta...)
-                        │    └── emit message_end (final assistant msg)
-                        │
-                        ├── executeToolCalls()  ← read/bash/edit/write...
-                        │    ├── prepareToolCall()  → beforeToolCall hook → extension tool_call event
-                        │    ├── tool.execute()    → onUpdate → emit tool_execution_update
-                        │    ├── finalizeToolCall() → afterToolCall hook → extension tool_result event
-                        │    ├── emit tool_execution_start
-                        │    ├── emit tool_execution_end
-                        │    └── emit message_start/end (toolResult)
-                        │
-                        ├── emit turn_end
-                        ├── prepareNextTurn()  ← 可切换 model/context
-                        ├── shouldStopAfterTurn?
-                        ├── getSteeringMessages()  ← 检查 steer 队列
-                        │
-                        └── [如果有 tool calls → 继续内层循环]
-                           [如果无 tool calls + 无 steering → 检查 follow-up → 继续外层循环]
-                           [如果无 follow-up → emit agent_end]
-    │
-    ▼
-AgentSession._handleAgentEvent(event)
-    │
-    ├── 扩展事件转发 (_emitExtensionEvent)
-    ├── 用户 listener 通知 (_emit)
-    ├── Session 持久化 (message_end → appendMessage)
-    ├── Auto-compaction 检查 (agent_end → _checkCompaction)
-    ├── Auto-retry 检查 (error → _prepareRetry)
-    └── Queue 状态更新
-    │
-    ▼
-InteractiveMode.handleSessionEvent(event)
-    │
-    ├── message_update → 更新流式 Markdown 渲染
-    ├── tool_execution_start → 添加工具执行块
-    ├── tool_execution_end → 更新工具结果
-    ├── agent_settled → 启用输入框
-    └── renderer.render() → @opentui/core 差分渲染到终端
+用户输入
+  ▼
+AgentSession.prompt()
+  ├─ command / skill / extension input 处理
+  ├─ Compaction 检查
+  ├─ AgentMessage[] → ModelMessage[]
+  ▼
+agent-core.run()
+  ├─ 创建或调用 ToolLoopAgent
+  ├─ emit agent_start
+  ▼
+ToolLoopAgent.stream()
+  ├─ prepareStep：注入 steering / 调整 model、messages、tools
+  ├─ 调用 Provider
+  ├─ fullStream → message_update
+  ├─ Tool schema 校验与并行执行
+  ├─ Tool hooks → tool_execution_*
+  ├─ onStepEnd → turn_end + 持久化
+  └─ stopWhen / 自然停止
+  ▼
+agent-core 外层检查 follow-up
+  ├─ 有：追加消息并再次调用 ToolLoopAgent
+  └─ 无：emit agent_end / agent_settled
+  ▼
+TUI 更新，SessionManager 追加 JSONL
 ```
 
-### 5.2 @tanstack/ai 集成的关键边界
+### 5.2 消息边界
 
 ```
-AgentMessage[] (内部格式，含自定义消息)
-    │
-    │ transformContext() ← 可选：修剪/注入上下文
-    ▼
-AgentMessage[] (修剪后)
-    │
-    │ convertToLlm() ← 过滤自定义消息，转换为纯 LLM 格式
-    ▼
-LLMMessage[] (纯 user/assistant/toolResult)
-    │
-    │ 适配层转换
-    ▼
-@tanstack/ai messages (UIMessage[] / ModelMessage[])
-    │
-    │ chat({ adapter, messages, tools, systemPrompts })
-    ▼
-@tanstack/ai 结果流 (textStream, steps, usage)
-    │
-    │ wrapTanstackResultAsStream()
-    ▼
-MessageEventStream (start/text_delta/thinking_delta/toolcall_delta/done/error)
-    │
-    │ streamAssistantResponse() 消费事件流
-    ▼
-AgentEvent (message_start/update/end)
+AgentMessage[]
+  │ transform/compaction（应用层）
+  ▼
+AgentMessage[]
+  │ convertToModelMessages()
+  ▼
+AI SDK ModelMessage[]
+  │ ToolLoopAgent.stream()
+  ▼
+fullStream + onStepEnd
+  │ mapAgentEvent()
+  ▼
+AgentEvent
+  ├─ TUI
+  ├─ Session JSONL
+  └─ Extensions
 ```
+
+只有 `ModelMessage[]` 进入 AI SDK。自定义 Session 消息永远停留在应用层。
 
 ---
 
 ## 6. 目录结构建议
 
 ```
-my-agent/
-├── package.json                    # monorepo root (bun workspaces)
-├── bunfig.toml                     # Bun 配置 (可选)
+tater/
+├── package.json
+├── bunfig.toml
 ├── tsconfig.base.json
 ├── tsconfig.json
-├── packages/
-│   │
-│   ├── ai-adapter/                 # LLM 适配层
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── stream-fn.ts        # StreamFn 实现 (包装 @tanstack/ai chat)
-│   │       ├── model-runtime.ts    # Model 发现 + Auth + OAuth
-│   │       ├── adapters/
-│   │       │   ├── registry.ts     # Provider adapter 注册表
-│   │       │   ├── openai.ts        # openaiText wrapper
-│   │       │   ├── anthropic.ts     # anthropicText wrapper
-│   │       │   └── ...
-│   │       ├── auth/
-│   │       │   ├── credential-store.ts
-│   │       │   ├── oauth/
-│   │       │   │   ├── device-code.ts
-│   │       │   │   └── pkce.ts
-│   │       │   └── types.ts
-│   │       ├── models/
-│   │       │   ├── store.ts        # Model 元数据缓存
-│   │       │   └── catalog.ts     # Model 目录
-│   │       └── types.ts
-│   │
-│   ├── agent-core/                 # Agent 运行时 (核心)
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── agent.ts            # Agent 类 (有状态运行时)
-│   │       ├── agent-loop.ts       # 核心循环 (双层 loop + tool 执行)
-│   │       ├── types.ts            # AgentMessage, AgentTool, AgentEvent, ...
-│   │       └── stream-fn.ts        # StreamFn 类型 + 默认实现
-│   │
-│   ├── agent-session/             # 会话管理 + 应用层
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── agent-session.ts    # AgentSession (共享会话核心)
-│   │       ├── session-manager.ts  # JSONL 持久化
-│   │       ├── settings-manager.ts # 分层配置
-│   │       ├── system-prompt.ts    # System prompt 构建
-│   │       ├── messages.ts        # AgentMessage 自定义类型扩展
-│   │       ├── sdk.ts             # createAgentSession() 工厂
-│   │       ├── compaction/
-│   │       │   ├── index.ts
-│   │       │   ├── compaction.ts   # 上下文压缩
-│   │       │   ├── branch-summary.ts
-│   │       │   └── utils.ts
-│   │       ├── extensions/
-│   │       │   ├── types.ts        # ExtensionContext, ExtensionEvent
-│   │       │   ├── runner.ts      # ExtensionRunner
-│   │       │   └── loader.ts      # Extension 加载
-│   │       ├── skills.ts          # Skills 加载与管理
-│   │       ├── resource-loader.ts # 统一资源加载
-│   │       ├── model-resolver.ts  # Model 解析
-│   │       └── retry.ts           # Auto-retry 逻辑
-│   │
-│   ├── tools/                      # 内置工具
-│   │   ├── package.json
-│   │   ├── tsconfig.json
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── read.ts
-│   │       ├── bash.ts
-│   │       ├── edit.ts
-│   │       ├── write.ts
-│   │       ├── grep.ts
-│   │       ├── find.ts
-│   │       ├── ls.ts
-│   │       ├── truncate.ts         # 输出截断
-│   │       └── file-mutation-queue.ts  # 文件修改队列 (防冲突)
-│   │
-│   ├── storage/                    # JSONL session 存储 (Bun 原生 IO)
-│   │   ├── package.json
-│   │   └── src/
-│   │       ├── index.ts
-│   │       ├── jsonl.ts            # JSONL 读写 (Bun.file / Bun.write)
-│   │       └── sqlite.ts           # 可选: Bun:sqlite 索引层
-│   │
-│   └── tui/                        # TUI 应用入口
-│       ├── package.json
-│       ├── tsconfig.json
-│       └── src/
-│           ├── main.ts            # TUI 入口
-│           ├── tui/
-│           │   ├── args.ts         # 参数解析
-│           │   └── initial-message.ts
-│           ├── modes/
-│           │   ├── interactive/
-│           │   │   ├── interactive-mode.ts
-│           │   │   ├── components/
-│           │   │   │   ├── message-list.ts    # 消息列表组件
-│           │   │   │   ├── markdown.ts         # Markdown 渲染器
-│           │   │   │   ├── editor.ts           # 输入编辑器
-│           │   │   │   ├── footer.ts           # 状态栏
-│           │   │   │   ├── tool-block.ts       # 工具执行块
-│           │   │   │   └── loader.ts           # 流式加载动画
-│           │   │   ├── theme.ts                # 主题
-│           │   │   └── keybindings.ts          # 快捷键
-│           │   ├── print-mode.ts
-│           │   └── rpc-mode.ts
-│           └── config.ts           # 路径/版本等配置
+└── packages/
+    ├── ai-adapter/
+    │   └── src/
+    │       ├── index.ts
+    │       ├── model-runtime.ts
+    │       ├── adapters/
+    │       │   ├── registry.ts
+    │       │   ├── openai.ts
+    │       │   └── anthropic.ts
+    │       ├── auth/
+    │       └── models/
+    ├── agent-core/
+    │   └── src/
+    │       ├── index.ts
+    │       ├── agent.ts             # ToolLoopAgent 薄封装
+    │       ├── types.ts             # AgentMessage / AgentEvent
+    │       └── queues.ts            # steering / follow-up
+    ├── agent-session/
+    │   └── src/
+    │       ├── agent-session.ts
+    │       ├── session-manager.ts
+    │       ├── settings-manager.ts
+    │       ├── system-prompt.ts
+    │       ├── compaction/
+    │       └── extensions/
+    ├── tools/
+    │   └── src/
+    │       ├── read.ts
+    │       ├── bash.ts
+    │       ├── edit.ts
+    │       ├── write.ts
+    │       ├── grep.ts
+    │       ├── find.ts
+    │       ├── ls.ts
+    │       ├── truncate.ts
+    │       └── file-mutation-queue.ts
+    ├── storage/
+    │   └── src/
+    │       ├── jsonl.ts
+    │       └── sqlite.ts
+    └── tui/
+        └── src/
+            ├── main.ts
+            ├── modes/
+            │   ├── interactive/
+            │   ├── print-mode.ts
+            │   └── rpc-mode.ts
+            └── config.ts
 ```
+
+删除原设计中的 `agent-core/agent-loop.ts`、`agent-core/stream-fn.ts` 和 `ai-adapter/stream-fn.ts` 职责；相应能力由 AI SDK 提供。
 
 ---
 
 ## 7. 实现路线图
 
-### Phase 1：最小可用 Agent（MVP）
->
-> 目标：能在终端里跟 agent 对话，让它读写文件、执行 bash 命令
+### Phase 1：最小可用 Agent
 
-1. **ai-adapter**：实现 `@tanstack/ai` → `StreamFn` 适配（先用 OpenAI 一个 provider）
-2. **agent-core**：实现 `Agent` + `AgentLoop` + `AgentTool` + `AgentEvent`
-3. **tools**：实现 `read` + `bash` + `edit` + `write` 四个核心工具（`bash` 用 `Bun.spawn()`，文件 IO 用 `Bun.file()`/`Bun.write()`）
-4. **agent-session**：实现 `AgentSession` + 基础 `SessionManager`（内存模式）
-5. **tui**：实现 `PrintMode`（stdout 输出，无 TUI）；用 `bun run` 直接执行 TS 源码
+1. 安装 `ai`、`@ai-sdk/openai`，不引入第二套 LLM SDK
+2. `ai-adapter` 实现 OpenAI `LanguageModel` 解析
+3. `tools` 用 AI SDK `tool()` 实现 read/bash/edit/write
+4. `agent-core` 用 `ToolLoopAgent` + `fullStream` 实现最小事件映射
+5. `agent-session` 实现内存会话与 Steering/Follow-up 队列
+6. `tui` 先实现 PrintMode
 
 ### Phase 2：交互式 TUI
->
-> 目标：有完整交互式终端界面
 
-1. **tui/modes/interactive**：基于 `@opentui/core` 构建 TUI
-   - 消息列表渲染
-   - Markdown 渲染
-   - 输入编辑器
-   - 状态栏
-   - 键盘快捷键
-2. **agent-session**：实现 steering / follow-up 队列
-3. **agent-session**：实现 system prompt 构建
+1. 使用 `@opentui/core` 构建消息列表、Markdown、输入框、状态栏
+2. 将 Session 事件映射到增量 UI
+3. 加入 system prompt 与 context files
 
-### Phase 3：持久化与会话管理
->
-> 目标：会话可以保存、恢复、分支
+### Phase 3：持久化与上下文
 
-1. **storage**：实现 JSONL session 持久化（用 `Bun.file()` / `Bun.write()` 追加写入）
-2. **storage**：可选——用 `bun:sqlite` 建立 session 元数据索引（快速 list/search）
-3. **agent-session**：完善 `SessionManager`（create/open/continue/fork/list）
-4. **agent-session**：实现 `SettingsManager`（分层配置，JSON 读写用 Bun.file）
-5. **agent-session**：实现 Compaction（上下文压缩）
+1. JSONL Session create/open/continue/fork/list
+2. SettingsManager 分层配置
+3. Compaction 与 auto-retry
+4. 可选 SQLite Session 索引
 
 ### Phase 4：扩展系统
->
-> 目标：支持插件扩展
 
-1. **agent-session/extensions**：实现 `ExtensionRunner` + `ExtensionContext`
-2. **agent-session**：实现 `ResourceLoader`（extensions/skills/prompts）
-3. **agent-session**：实现 Skills 系统
-4. **tools**：补充 `grep` / `find` / `ls` 工具
+1. ExtensionRunner 与 ExtensionContext
+2. Skills、prompt templates、commands
+3. 补充 grep/find/ls
 
-### Phase 5：多 Provider + Auth
->
-> 目标：支持多个 LLM provider，含 OAuth
+### Phase 5：多 Provider 与 Auth
 
-1. **ai-adapter**：注册更多 provider adapter（Anthropic, Google, ...）
-2. **ai-adapter/auth**：实现 API key 存储
-3. **ai-adapter/auth**：实现 OAuth 流程
-4. **ai-adapter/models**：实现 Model 目录管理
+1. 增加 `@ai-sdk/anthropic` 等官方 Provider
+2. API key 存储
+3. 按实际需要实现 OAuth
+4. Model catalog 与 model cycling
 
-### Phase 6：高级功能
->
-> 目标：功能对标 Pi
+### Phase 6：高级模式
 
-1. **tui/modes/rpc**：RPC 模式——用 `Bun.serve({ unix })` 起 Unix socket JSON-RPC 服务，事件流用 WebSocket 推送
-2. **agent-session**：Auto-retry（可重试错误自动重试）
-3. **agent-session**：Model cycling（Ctrl+P 切换 model）
-4. **agent-session**：Thinking level 管理
-5. **tui**：自动补全（slash commands + model names + file paths）
-6. **tui**：HTML 导出
-7. **agent-session**：Context files（AGENTS.md 等自动加载）
-8. **打包发布**：用 `bun build --compile` 生成独立二进制
+1. RPC 模式
+2. Tool approval
+3. Thinking level / providerOptions
+4. 自动补全、HTML 导出和独立二进制
+
+每个 Phase 只实现当前需要的能力，不提前复刻 Pi 内部抽象。
 
 ---
 
 ## 附录 A：关键设计决策
 
-### A.1 为什么不完全用 @tanstack/ai 的内置 agent loop？
+### A.1 为什么使用 ToolLoopAgent？
 
-`@tanstack/ai` 的 `chat()` 有内置 agent loop（`stopWhen`/`maxSteps`/`onStepFinish`），但 Pi 的 loop 更强大：
+AI SDK 已提供内层循环最难且最通用的部分：Provider 流标准化、Tool Call 解析与校验、Tool 执行、Step 管理、停止条件、审批和错误传播。再次实现这些能力只会形成第二套状态机。
 
-| 能力 | @tanstack/ai 内置 loop | 自建 loop (Pi 风格) |
-| ------ | ---------------------- | --------------------- |
-| Steering（运行中注入消息） | ✗ | ✓ |
-| Follow-up（停止后追加消息） | ✗ | ✓ |
-| prepareNextTurn（每轮切换 model/context） | ✗ | ✓ |
-| shouldStopAfterTurn（优雅停止） | ✗ | ✓ |
-| 截断 tool call 处理 | ✗ | ✓ |
-| 并行/顺序 tool 执行策略 | 部分 | ✓ |
-| beforeToolCall/afterToolCall hooks | ✓ (middleware) | ✓ |
-| 自定义消息类型 | ✗ | ✓ (AgentMessage) |
-| 上下文转换 (transformContext) | ✗ | ✓ |
+| 能力 | 实现位置 |
+| --- | --- |
+| Tool Loop | AI SDK `ToolLoopAgent` |
+| 每轮 model/context/tools 调整 | `prepareStep` |
+| 停止规则 | `stopWhen` |
+| Tool 生命周期 | AI SDK callbacks / `fullStream` |
+| Steering | `prepareStep` + Session 队列 |
+| Follow-up | Agent 调用外层的小循环 |
+| Session 自定义消息 | `AgentMessage` + 边界转换 |
+| Compaction/持久化/扩展 | `agent-session` |
 
-**建议**：用 `chat()` 的 `stopWhen: "toolCall"` 模式（单步模式），在外层自己实现 agent loop。这样 `@tanstack/ai` 只负责单次 LLM 调用 + tool schema 验证，循环控制权完全在自己手里。
+### A.2 为什么仍保留 AgentMessage？
 
-### A.2 为什么用 AgentMessage 而不是直接用 @tanstack/ai 的消息类型？
+- Session 需要保存 Compaction、Extension 和 UI 消息
+- 这些消息不一定符合模型协议，也不应消耗上下文
+- `convertToModelMessages` 是唯一模型调用边界
+- AI SDK `ModelMessage` 不泄漏到 Session 文件格式和 TUI API
 
-- `@tanstack/ai` 的 `UIMessage`/`ModelMessage` 是固定的，无法添加自定义消息类型
-- Pi 的 `AgentMessage` 通过 declaration merging 支持任意自定义消息（bash 执行记录、compaction 摘要、extension 自定义消息）
-- `convertToLlm` 在 LLM 调用边界过滤自定义消息，只发送 LLM 能理解的格式
-- 这使得 session 持久化和 UI 渲染能包含 LLM 不需要的信息
+### A.3 为什么不提供 StreamFn？
 
-### A.3 @opentui/core 上需要构建的组件
+`ToolLoopAgent.stream()` 已经返回标准化 `fullStream`。额外的 `StreamFn` 会重复 Provider 抽象，并迫使项目再次定义 text/thinking/tool-call 事件协议。应用只需把 `fullStream` 映射成稳定的 `AgentEvent`。
 
-`@opentui/core` 提供底层渲染能力，但以下组件需要自己实现：
+### A.4 Tool 执行策略
 
-| 组件 | 说明 |
-| ------ | ------ |
-| Markdown 渲染器 | 解析 markdown AST → renderable tree（代码块、标题、列表、链接等） |
-| 消息列表 | 可滚动的历史消息区域，支持增量追加 |
-| 输入编辑器 | 行编辑、光标移动、选择、多行、粘贴、撤销/重做 |
-| 自动补全 | slash commands + model names + file paths 的补全 |
-| 状态栏 | model、token 使用、cost、队列状态 |
-| 流式加载动画 | agent 工作时的动画指示器 |
-| 工具执行块 | 工具调用的折叠/展开显示 |
-| 对话框/选择器 | 模型选择、确认对话框等 overlay |
-
-### A.4 Schema 选择：Zod vs TypeBox
-
-- Pi 用 TypeBox（`@sinclair/typebox`），因为它能同时提供 JSON Schema（发给 LLM）和 TypeScript 类型
-- `@tanstack/ai` 用 Zod
-- **建议**：统一用 Zod（与 `@tanstack/ai` 对齐），在 ai-adapter 中将 Zod schema 转换为 JSON Schema 发给 LLM（`zod-to-json-schema` 或 `@tanstack/ai` 内置的转换）
+AI SDK 默认并行执行同一 Step 的 Tool Calls。文件写冲突由 `file-mutation-queue.ts` 在 Tool 边界串行化。这比复制完整 Tool 调度器更小，也能覆盖真实风险。只有未来出现跨 Tool 的严格事务语义时，才扩展调度。
 
 ---
 
@@ -1704,25 +1276,25 @@ my-agent/
 
 ### 兼容性说明
 
-- `@tanstack/ai` 和 `@opentui/core` 是纯 JavaScript/TypeScript 包，与 Bun 完全兼容
+- Vercel AI SDK 和 `@opentui/core` 可在 Bun 中使用
 - Bun 支持 Node.js API 兼容层，少量代码如果使用了 `node:fs`、`node:path` 等也能正常工作
 - 建议新代码优先使用 Bun API，但不必强制重写已有的 Node.js 兼容代码
 - `bun:sqlite` 的 API 与 `node:sqlite` 略有不同，但功能等价
 
 ---
 
-## 附录 C：@tanstack/ai → agent-core 类型映射
+## 附录 C：Vercel AI SDK → agent-core 类型映射
 
-| @tanstack/ai | agent-core | 说明 |
-| ------------- | ----------- | ------ |
-| `chat()` 返回的 `textStream` | `MessageEventStream` | 需要包装为细粒度事件 |
-| `toolDefinition()` | `AgentTool` | schema + execute 对应 |
-| `UIMessage` / `ModelMessage` | `LLMMessage` (内部用) | 在 convertToLlm 后对齐 |
-| adapter (`openaiText()`) | `ModelConfig` | provider + modelId 映射 |
-| `middleware.beforeToolCall` | `beforeToolCall` hook | 概念对应 |
-| `middleware.afterToolCall` | `afterToolCall` hook | 概念对应 |
-| `middleware.onStepFinish` | `turn_end` event | 概念对应 |
-| `stopWhen` / `maxSteps` | 不使用（自建 loop） | 用 `stopWhen: "toolCall"` 单步 |
-| `systemPrompts` | `AgentContext.systemPrompt` | 直接对应 |
-| `steps` (返回值) | `turn_end` × N | 自建 loop 自己跟踪 |
-| `usage` (返回值) | `AssistantMessage.usage` | 从 done 事件提取 |
+| Vercel AI SDK | agent-core | 说明 |
+| --- | --- | --- |
+| `ToolLoopAgent` | `Agent` 薄封装 | 内层 Tool Loop 由 SDK 管理 |
+| `ModelMessage` | 模型调用边界格式 | 从 `AgentMessage` 转换 |
+| `tool()` | 内置工具 | 直接使用，不做 schema 转换 |
+| `prepareStep` | Steering / 动态配置 | 注入消息、切换 model/tools |
+| `stopWhen` | 停止策略 | 步数和自定义条件 |
+| `fullStream` | `AgentEvent` 来源 | 映射 text/reasoning/tool 事件 |
+| `onStepStart/onStepEnd` | `turn_start/turn_end` | 生命周期映射 |
+| `onToolExecutionStart/End` | `tool_execution_start/end` | Tool 生命周期映射 |
+| `repairToolCall` | Tool 参数修复 | 使用 SDK 能力 |
+| `toolApproval` | Tool 审批 | 使用 SDK 能力 |
+| `LanguageModel` | `ModelRuntime.resolveModel()` 返回值 | Provider 官方实现 |

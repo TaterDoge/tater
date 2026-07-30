@@ -1,2 +1,2 @@
-// LLM 适配层：@tanstack/ai → 统一 StreamFn 适配
+// Vercel AI SDK Provider 与认证入口
 export {};

@@ -7,7 +7,9 @@
     ],
     "catalog": {
       "zod": "^4.4.3",
-      "@tanstack/ai": "^0.42.0",
+      "ai": "^7.0.42",
+      "@ai-sdk/openai": "^4.0.24",
+      "@ai-sdk/anthropic": "^4.0.24",
       "@opentui/core": "^0.4.5"
     }
   },

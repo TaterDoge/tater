@@ -9,10 +9,5 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@tater/agent-session": "workspace:*",
-    "@tater/agent-core": "workspace:*",
-    "@tanstack/ai": "catalog:",
-    "@opentui/core": "catalog:"
-  }
+  "dependencies": {}
 }

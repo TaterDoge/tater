@@ -9,10 +9,5 @@
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "@tater/agent-core": "workspace:*",
-    "@tater/ai-adapter": "workspace:*",
-    "@tater/tools": "workspace:*",
-    "@tater/storage": "workspace:*"
-  }
+  "dependencies": {}
 }
