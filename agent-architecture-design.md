@@ -1,6 +1,6 @@
 # 类 Pi Agent 架构设计方案
 
-> 基于 Pi (pi-mono) 源码深度分析，使用 Vercel AI SDK 替代 LLM 请求层，`@opentui/core` 替代 TUI 层，其余自主实现。
+> 基于 Pi (pi-mono) 源码深度分析，使用 Vercel AI SDK 替代 LLM 请求层，以 `@opentui/solid` + SolidJS 构建 TUI 层，其余自主实现。
 
 ---
 
@@ -173,7 +173,7 @@ Extension 通过 ExtensionContext 访问：
 | Pi 原生包 | 功能 | 你的替代方案 | 需自己实现的部分 |
 | ----------- | ------ | ------------- | ---------------- |
 | `pi-ai` | 多 Provider LLM 请求 | Vercel AI SDK | Model 发现/注册、Auth 存储、OAuth 流程 |
-| `pi-tui` | 终端 UI 渲染 | `@opentui/core` | Markdown 渲染、Editor 组件、Autocomplete |
+| `pi-tui` | 终端 UI 渲染 | `@opentui/solid` + SolidJS | Markdown 渲染、Editor 组件、Autocomplete |
 | `pi-agent-core` | Agent 运行时 | AI SDK `ToolLoopAgent` + 薄封装 | Steering、Follow-up、应用事件映射 |
 | `pi-coding-agent` | 应用层 | **自己实现** | 全部 |
 | `storage/sqlite-node` | 持久化 | **Bun 内置 `bun:sqlite` + `Bun.file()`** | 存储层逻辑 |
@@ -248,35 +248,30 @@ AI SDK 直接提供：
 
 ---
 
-### 2.2 `@opentui/core` 提供的能力
+### 2.2 `@opentui/solid` 提供的能力
 
-```typescript
-import { createCliRenderer, type KeyEvent } from "@opentui/core";
+```tsx
+import { render, useKeyboard } from "@opentui/solid";
+import { createSignal } from "solid-js";
 
-const renderer = await createCliRenderer({});
+const App = () => {
+  const [message, setMessage] = createSignal("Hello");
 
-// Renderable 系统
-const root = renderer.createRenderable({
-  type: "row",
-  children: [
-    { type: "text", content: "Hello" },
-    { type: "text", content: "World" },
-  ],
-});
+  useKeyboard((event) => {
+    if (event.name === "return") setMessage("World");
+  });
 
-// 键盘输入
-renderer.keyInput.on("keypress", (event: KeyEvent) => {
-  if (event.name === "return") { /* ... */ }
-});
+  return <text>{message()}</text>;
+};
 
-// 渲染循环由 renderer 内部驱动
+await render(App);
 ```
 
 **关键差异**：
 
 - Pi 的 TUI 是自研差分渲染引擎 + 自定义组件系统
-- `@opentui/core` 提供原生 Zig 渲染核心 + TypeScript 绑定
-- 你需要在 `@opentui/core` 的 renderable 系统之上构建：Markdown 组件、消息列表、编辑器输入框、状态栏等
+- `@opentui/core` 继续提供原生 Zig 渲染核心
+- `@opentui/solid` 提供 JSX reconciler，界面使用 SolidJS signals、组件和生命周期组织
 
 ---
 
@@ -292,7 +287,7 @@ tater/
 │   ├── agent-session/       # Session、Compaction、Extensions
 │   ├── tools/               # read/bash/edit/write/grep/find/ls
 │   ├── storage/             # JSONL + 可选 SQLite 索引
-│   └── tui/                 # @opentui/core 交互/打印/RPC 模式
+│   └── tui/                 # SolidJS + OpenTUI 交互/打印/RPC 模式
 ├── package.json
 ├── bunfig.toml
 └── tsconfig.json
@@ -302,7 +297,7 @@ tater/
 
 ```
                     ┌──────────────┐
-                    │     tui      │ ← @opentui/core
+                    │     tui      │ ← @opentui/solid + SolidJS
                     └──────┬───────┘
                            ▼
                     ┌──────────────┐
@@ -375,7 +370,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
 `ModelRuntime` 继续负责：
 
 - Model catalog 与元数据
-- `~/.tater/auth.json` 凭据
+- `~/.config/tater/auth.json` 凭据（遵循 `$XDG_CONFIG_HOME/tater`）
 - API key 环境变量/本地凭据解析
 - 需要时的 OAuth 登录与刷新
 
@@ -649,7 +644,7 @@ class SettingsManager {
   // 配置文件层级（优先级从高到低）：
   // 1. CLI 参数 (--model, --thinking, ...)
   // 2. Project settings (.tater/settings.json)
-  // 3. Global settings (~/.tater/settings.json)
+  // 3. Global settings (~/.config/tater/settings.json，遵循 $XDG_CONFIG_HOME)
 
   getDefaultProvider(): string | undefined;
   getDefaultModel(): string | undefined;
@@ -861,7 +856,7 @@ type ExtensionEvent =
 #### 4.6.1 三种 Run Mode
 
 ```typescript
-// tui/main.ts
+// tui/main.tsx
 async function main(args: string[]) {
   // 1. 解析 CLI 参数
   const parsed = parseArgs(args);
@@ -884,99 +879,59 @@ async function main(args: string[]) {
 }
 ```
 
-#### 4.6.2 InteractiveMode（基于 @opentui/core）
+#### 4.6.2 InteractiveMode（基于 @opentui/solid + SolidJS）
 
-```typescript
-// tui/modes/interactive.ts
-import { createCliRenderer, type KeyEvent } from "@opentui/core";
+```tsx
+// tui/modes/interactive.tsx
+import { render, useKeyboard } from "@opentui/solid";
+import { createSignal, onCleanup, onMount } from "solid-js";
 
-class InteractiveMode {
-  private renderer: CliRenderer;
-  private session: AgentSession;
+const InteractiveMode = (props: { session: AgentSession }) => {
+  const [messages, setMessages] = createSignal<AgentMessage[]>([]);
 
-  async run(): Promise<void> {
-    // 1. 创建 @opentui/core renderer
-    this.renderer = await createCliRenderer({});
-
-    // 2. 构建 UI 组件树
-    this.buildUI();
-
-    // 3. 订阅 AgentSession 事件 → 更新 UI
-    this.session.subscribe((event) => this.handleSessionEvent(event));
-
-    // 4. 键盘事件路由
-    this.renderer.keyInput.on("keypress", (event: KeyEvent) => {
-      this.handleKeyPress(event);
+  onMount(() => {
+    const unsubscribe = props.session.subscribe((event) => {
+      // 将 AgentSession 事件映射为 signals，SolidJS 只更新受影响的组件。
     });
+    onCleanup(unsubscribe);
+  });
 
-    // 5. 进入渲染循环 (renderer 内部驱动)
-    // renderer 会持续渲染直到进程退出
-  }
+  useKeyboard((event) => {
+    // Enter 提交，Ctrl+C 中断或退出。
+  });
 
-  private buildUI(): void {
-    // 使用 @opentui/core 的 renderable 系统构建：
-    //
-    // ┌────────────────────────────────────┐
-    // │ MessageList (滚动区域)               │  ← 渲染 AgentMessage[]
-    // │   UserMessage                       │
-    // │   AssistantMessage (Markdown)       │
-    // │   ToolResultBlock                   │
-    // │   ...                               │
-    // ├────────────────────────────────────┤
-    // │ StreamingIndicator                  │  ← 流式输出时的加载动画
-    // ├────────────────────────────────────┤
-    // │ InputBox (编辑器)                    │  ← 用户输入
-    // ├────────────────────────────────────┤
-    // │ Footer (状态栏)                      │  ← model、tokens、cost
-    // └────────────────────────────────────┘
-    //
-    // 需要在 @opentui/core 之上实现的组件：
-    // - Markdown 渲染器 (解析 markdown → renderable tree)
-    // - 滚动消息列表
-    // - 行编辑器 (光标移动、选择、复制粘贴)
-    // - 自动补全 (slash commands + model names + file paths)
-    // - 状态栏
-  }
+  return (
+    <box flexDirection="column">
+      <MessageList messages={messages()} />
+      <Editor />
+      <Footer />
+    </box>
+  );
+};
 
-  private handleSessionEvent(event: AgentSessionEvent): void {
-    switch (event.type) {
-      case "message_start":
-        if (event.message.role === "assistant") {
-          this.startStreamingDisplay(event.message);
-        } else if (event.message.role === "user") {
-          this.addUserMessage(event.message);
-        }
-        break;
-      case "message_update":
-        this.updateStreamingDisplay(event.message);
-        break;
-      case "message_end":
-        this.finalizeMessage(event.message);
-        break;
-      case "tool_execution_start":
-        this.addToolExecutionBlock(event.toolName, event.args);
-        break;
-      case "tool_execution_end":
-        this.finalizeToolExecution(event.toolCallId, event.result, event.isError);
-        break;
-      case "agent_settled":
-        this.setInputEnabled(true);
-        break;
-      // ... 其他事件
-    }
-    this.renderer.render();  // 触发重渲染
-  }
+export const runInteractiveMode = async (session: AgentSession) =>
+  render(() => <InteractiveMode session={session} />);
 
-  private handleKeyPress(event: KeyEvent): void {
-    // Enter → 提交输入
-    // Ctrl+C → 中断/退出
-    // Ctrl+P → 切换 model
-    // Tab → 自动补全
-    // ↑/↓ → 滚动消息历史
-    // ...
-  }
-}
 ```
+
+Solid JSX 组件树：
+
+```text
+┌────────────────────────────────────┐
+│ MessageList（滚动区域）              │
+│   UserMessage                      │
+│   AssistantMessage（Markdown）      │
+│   ToolResultBlock                  │
+├────────────────────────────────────┤
+│ StreamingIndicator                 │
+├────────────────────────────────────┤
+│ Editor                             │
+├────────────────────────────────────┤
+│ Footer（model、tokens、cost）        │
+└────────────────────────────────────┘
+```
+
+需要使用 `@opentui/solid` JSX 实现 Markdown、滚动消息列表、行编辑器、自动补全和状态栏。Session 事件只负责更新 signals，不再手动调用 renderer 重绘。
 
 #### 4.6.3 PrintMode（无 TUI）
 
@@ -1159,7 +1114,7 @@ tater/
     │       └── sqlite.ts
     └── tui/
         └── src/
-            ├── main.ts
+            ├── main.tsx
             ├── modes/
             │   ├── interactive/
             │   ├── print-mode.ts
@@ -1184,7 +1139,7 @@ tater/
 
 ### Phase 2：交互式 TUI
 
-1. 使用 `@opentui/core` 构建消息列表、Markdown、输入框、状态栏
+1. 使用 `@opentui/solid` JSX 组件构建消息列表、Markdown、输入框、状态栏
 2. 将 Session 事件映射到增量 UI
 3. 加入 system prompt 与 context files
 
@@ -1276,7 +1231,7 @@ AI SDK 默认并行执行同一 Step 的 Tool Calls。文件写冲突由 `file-m
 
 ### 兼容性说明
 
-- Vercel AI SDK 和 `@opentui/core` 可在 Bun 中使用
+- Vercel AI SDK、SolidJS 和 `@opentui/solid` 可在 Bun 中使用
 - Bun 支持 Node.js API 兼容层，少量代码如果使用了 `node:fs`、`node:path` 等也能正常工作
 - 建议新代码优先使用 Bun API，但不必强制重写已有的 Node.js 兼容代码
 - `bun:sqlite` 的 API 与 `node:sqlite` 略有不同，但功能等价

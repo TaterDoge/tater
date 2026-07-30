@@ -67,7 +67,7 @@ tags:
 - **REQ-002**: 学习路径必须让每个 Task 都产生可运行、可观察、可验证的结果。
 - **REQ-003**: 使用 Bun 作为运行时和包管理器。
 - **REQ-004**: 使用 Vercel AI SDK 提供模型调用和内层 Tool Loop，不重复实现第二套 Tool Loop。
-- **REQ-005**: 使用 `@opentui/core` 构建最终交互式 TUI，但必须在普通 PrintMode 和 REPL 稳定后再引入。
+- **REQ-005**: 使用 `@opentui/solid` + SolidJS 构建最终交互式 TUI，但必须在普通 PrintMode 和 REPL 稳定后再引入。
 - **REQ-006**: 内部 `AgentMessage` 与模型边界 `ModelMessage` 保持分离。
 - **SEC-001**: 文件工具必须限制在允许的工作目录内，防止路径穿越。
 - **SEC-002**: `bash` 必须支持超时、中断、退出码和 stderr，不得静默吞错。
@@ -117,7 +117,7 @@ CLI 参数 → resolveModel() → 模型流 → stdout
 
 ```text
 命令行文本
-  → packages/tui/src/main.ts
+  → packages/tui/src/main.tsx
   → packages/ai-adapter/src/model-runtime.ts
   → AI SDK 模型调用
   → text stream
@@ -128,7 +128,7 @@ CLI 参数 → resolveModel() → 模型流 → stdout
 
 - `packages/ai-adapter/src/model-runtime.ts`
 - `packages/ai-adapter/src/index.ts`
-- `packages/tui/src/main.ts`
+- `packages/tui/src/main.tsx`
 - `packages/tui/src/modes/print-mode.ts`
 - 对应包的 `package.json`
 
@@ -673,7 +673,7 @@ create → appendMessage → open → continueRecent
 
 **实施范围**
 
-- `packages/tui/src/main.ts`
+- `packages/tui/src/main.tsx`
 - `packages/tui/src/modes/repl-mode.ts`
 - `packages/tui/src/tui/args.ts`
 
@@ -690,7 +690,7 @@ create → appendMessage → open → continueRecent
 - 可以连续完成多轮对话。
 - Tool 输出与用户输入不会混淆。
 - 重启后可以恢复上下文。
-- REPL 不导入 `@opentui/core`。
+- REPL 不导入 `@opentui/solid`。
 
 **小练习**
 
@@ -708,10 +708,10 @@ create → appendMessage → open → continueRecent
 
 **实施范围**
 
-- `packages/tui/src/modes/interactive/interactive-mode.ts`
-- `packages/tui/src/modes/interactive/components/message-list.ts`
-- `packages/tui/src/modes/interactive/components/editor.ts`
-- `packages/tui/src/modes/interactive/components/footer.ts`
+- `packages/tui/src/modes/interactive/interactive-mode.tsx`
+- `packages/tui/src/modes/interactive/components/message-list.tsx`
+- `packages/tui/src/modes/interactive/components/editor.tsx`
+- `packages/tui/src/modes/interactive/components/footer.tsx`
 - `packages/tui/src/modes/interactive/keybindings.ts`
 
 **第一版布局**
@@ -906,7 +906,7 @@ CLI > .tater/settings.json > ~/.tater/settings.json > 代码默认值
 
 - `packages/agent-core/src/agent.ts`
 - `packages/agent-session/src/agent-session.ts`
-- `packages/tui/src/modes/interactive/interactive-mode.ts`
+- `packages/tui/src/modes/interactive/interactive-mode.tsx`
 - `packages/agent-core/src/tool-approval.test.ts`
 
 **完成标准**
@@ -1122,13 +1122,13 @@ subscribe events
 - **DEP-002**: `ai`，用于模型流和 `ToolLoopAgent`。
 - **DEP-003**: `@ai-sdk/openai`，第一阶段唯一 Provider。
 - **DEP-004**: `zod`，用于 Tool 和 RPC 参数校验。
-- **DEP-005**: `@opentui/core`，仅从 TASK-014 开始使用。
+- **DEP-005**: `@opentui/solid`、`solid-js` 和底层 `@opentui/core`，仅从 TASK-014 开始使用。
 - **DEP-006**: `@ai-sdk/anthropic`，仅从 TASK-019 开始使用。
 
 ## 9. 关键文件
 
 - **FILE-001**: `agent-architecture-design.md`，最终能力地图与架构边界参考。
-- **FILE-002**: `packages/tui/src/main.ts`，CLI 入口和运行模式分发。
+- **FILE-002**: `packages/tui/src/main.tsx`，CLI 入口和运行模式分发。
 - **FILE-003**: `packages/ai-adapter/src/model-runtime.ts`，模型解析边界。
 - **FILE-004**: `packages/agent-core/src/agent.ts`，ToolLoopAgent 薄封装和运行时控制。
 - **FILE-005**: `packages/agent-core/src/types.ts`，AgentMessage 和 AgentEvent。
@@ -1136,7 +1136,7 @@ subscribe events
 - **FILE-007**: `packages/agent-session/src/session-manager.ts`，Session JSONL 重放与恢复。
 - **FILE-008**: `packages/tools/src/index.ts`，内置工具注册入口。
 - **FILE-009**: `packages/tui/src/modes/print-mode.ts`，最早可验证的输出界面。
-- **FILE-010**: `packages/tui/src/modes/interactive/interactive-mode.ts`，最终交互式终端界面。
+- **FILE-010**: `packages/tui/src/modes/interactive/interactive-mode.tsx`，最终交互式终端界面。
 
 ## 10. 测试计划
 
