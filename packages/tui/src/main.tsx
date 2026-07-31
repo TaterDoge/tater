@@ -1,13 +1,22 @@
-// TUI 入口：参数解析 → 模式分发
-
 /** @jsxImportSource @opentui/solid */
-import "@opentui/solid/preload";
-
+import { ConsolePosition, createCliRenderer } from "@opentui/core";
+import { createDefaultOpenTuiKeymap } from "@opentui/keymap/opentui";
+import { KeymapProvider } from "@opentui/keymap/solid";
 import { render } from "@opentui/solid";
+import { InteractiveMode } from "./modes/interactive/interactive-mode";
 
-const App = () => <text fg="#00FF00">Hello, OpenTUI!</text>;
-
-await render(App, {
+const renderer = await createCliRenderer({
+  consoleOptions: { position: ConsolePosition.BOTTOM, sizePercent: 30 },
   exitOnCtrlC: true,
   targetFps: 60,
 });
+const keymap = createDefaultOpenTuiKeymap(renderer);
+
+await render(
+  () => (
+    <KeymapProvider keymap={keymap}>
+      <InteractiveMode />
+    </KeymapProvider>
+  ),
+  renderer
+);

@@ -7,9 +7,12 @@
     ".": "./src/main.tsx"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
+    "@opentui/core": "catalog:",
+    "@opentui/keymap": "^0.4.5",
     "@opentui/solid": "^0.4.5",
     "solid-js": "1.9.12"
   }

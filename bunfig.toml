@@ -1,2 +1,4 @@
+preload = ["./packages/tui/node_modules/@opentui/solid/scripts/preload.js"]
+
 [install]
 # 自动安装 workspaces
