@@ -1,4 +1,6 @@
-/** @jsxImportSource @opentui/solid */
+import { effect } from "@opentui/solid";
+import { type ModelSettings, resolveModel } from "@tater/ai-adapter";
+import { streamText } from "ai";
 import { createSignal, For } from "solid-js";
 import { useInteractiveEvents } from "./events";
 import { useInteractiveKeybindings } from "./keybindings";
@@ -7,6 +9,26 @@ interface Msg {
   content: string;
   role: "user" | "assistant";
 }
+
+// TODO: 实际从 SettingsManager.create(cwd).getConfig() 构造ModelSettings;
+const modelSettings: ModelSettings = {
+  generation: { temperature: 0.7 },
+  model: "custom/gpt-5.6-luna",
+  provider: {
+    custom: {
+      adapter: "openai",
+      models: {
+        "gpt-5.6-luna": {
+          api: "chat",
+          limit: { context: 128_000, output: 16_384 },
+        },
+      },
+      options: { apiKey: "sk-local", baseURL: "http://localhost:8317/v1" },
+    },
+  },
+};
+
+const { model } = resolveModel(modelSettings);
 
 export const InteractiveMode = () => {
   useInteractiveEvents();
@@ -17,21 +39,42 @@ export const InteractiveMode = () => {
   ]);
   const [draft, setDraft] = createSignal("");
 
-  const submit = () => {
+  const submit = async () => {
     const v = draft();
     if (!v.trim()) {
       return;
     }
-    console.log(v);
-    setMessages((m) => [...m, { content: v, role: "user" }]);
-    setDraft(""); // ponytail: 假数据，接 LLM 时换成流式 append
-    setTimeout(() => {
-      setMessages((m) => [
-        ...m,
-        { content: "（占位回复）", role: "assistant" },
-      ]);
-    }, 300);
+
+    // 先把用户消息和一条空的 assistant 占位推进列表，UI 立即响应
+    const history = messages();
+    setMessages((m) => [
+      ...m,
+      { content: v, role: "user" },
+      { content: "", role: "assistant" },
+    ]);
+    setDraft("");
+
+    const result = streamText({
+      messages: [...history, { content: v, role: "user" }],
+      model,
+    });
+
+    // 消费 textStream，把每个 chunk 追加到最后一条 assistant 消息
+    for await (const chunk of result.textStream) {
+      setMessages((msgs) => {
+        const last = msgs.at(-1);
+        if (!last) {
+          return msgs; // 占位已被清空则不动
+        }
+        const merged = { ...last, content: last.content + chunk };
+        return msgs.with(-1, merged);
+      });
+    }
   };
+
+  effect(() => {
+    console.log("messages", messages());
+  });
 
   return (
     <box
