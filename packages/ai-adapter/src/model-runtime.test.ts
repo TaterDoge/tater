@@ -48,6 +48,20 @@ describe("resolveModel", () => {
     expect(typeof resolved.model).toBe("object");
   });
 
+  test("未设置默认模型时使用第一个 Provider 的第一个模型", () => {
+    const { model: _model, ...configWithoutDefault } = config;
+    const resolved = resolveModel(configWithoutDefault);
+
+    expect(resolved.id).toBe("test-model");
+    expect(resolved.providerId).toBe("local");
+  });
+
+  test("未配置任何模型时报告错误", () => {
+    expect(() => resolveModel({ generation: {}, provider: {} })).toThrow(
+      "未配置可用模型"
+    );
+  });
+
   test("映射模型的 thinking level", () => {
     const provider = config.provider.local;
 

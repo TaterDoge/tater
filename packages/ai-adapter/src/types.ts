@@ -31,10 +31,12 @@ const modelBaseConfigSchema = z.strictObject({
       output: z.number().nonnegative(),
     })
     .optional(),
-  limit: z.strictObject({
-    context: z.number().int().positive(),
-    output: z.number().int().positive(),
-  }),
+  limit: z
+    .strictObject({
+      context: z.number().int().positive(),
+      output: z.number().int().positive(),
+    })
+    .optional(),
   modalities: z
     .strictObject({
       input: z.array(z.enum(["text", "image", "audio"])),

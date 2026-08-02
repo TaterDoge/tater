@@ -4,6 +4,16 @@ import { providerConfigSchema } from "./types";
 const model = { limit: { context: 1000, output: 100 } };
 
 describe("providerConfigSchema", () => {
+  test("模型 limit 可选", () => {
+    expect(
+      providerConfigSchema.parse({
+        adapter: "openai",
+        models: { test: { api: "chat" } },
+        options: {},
+      })
+    ).toBeDefined();
+  });
+
   test("OpenAI 支持选择 API", () => {
     expect(
       providerConfigSchema.parse({

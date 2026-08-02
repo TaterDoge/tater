@@ -39,11 +39,20 @@ export function resolveModel(
   config: ModelSettings,
   reference = config.model
 ): ResolvedModel {
-  if (!reference) {
-    throw new Error("未配置默认模型");
+  const fallback = Object.entries(config.provider).find(
+    ([, candidate]) => Object.keys(candidate.models).length > 0
+  );
+  const { providerId, modelId } = reference
+    ? parseModelReference(reference)
+    : {
+        modelId: Object.keys(fallback?.[1].models ?? {})[0],
+        providerId: fallback?.[0],
+      };
+
+  if (!(providerId && modelId)) {
+    throw new Error("未配置可用模型");
   }
 
-  const { providerId, modelId } = parseModelReference(reference);
   const provider = config.provider[providerId];
   if (!provider) {
     throw new Error(`不存在 Provider：${providerId}`);

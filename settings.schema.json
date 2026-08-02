@@ -281,7 +281,6 @@
                       "enum": ["responses", "chat", "completion"]
                     }
                   },
-                  "required": ["limit"],
                   "additionalProperties": false
                 }
               },
@@ -469,7 +468,6 @@
                       }
                     }
                   },
-                  "required": ["limit"],
                   "additionalProperties": false
                 }
               },
@@ -653,7 +651,6 @@
                       }
                     }
                   },
-                  "required": ["limit"],
                   "additionalProperties": false
                 }
               },

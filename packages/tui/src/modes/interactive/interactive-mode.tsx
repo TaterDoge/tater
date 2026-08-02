@@ -1,5 +1,6 @@
 import { effect } from "@opentui/solid";
-import { type ModelSettings, resolveModel } from "@tater/ai-adapter";
+import { SettingsManager } from "@tater/agent-session";
+import { resolveModel } from "@tater/ai-adapter";
 import { streamText } from "ai";
 import { createSignal, For } from "solid-js";
 import { useInteractiveEvents } from "./events";
@@ -10,25 +11,8 @@ interface Msg {
   role: "user" | "assistant";
 }
 
-// TODO: 实际从 SettingsManager.create(cwd).getConfig() 构造ModelSettings;
-const modelSettings: ModelSettings = {
-  generation: { temperature: 0.7 },
-  model: "custom/gpt-5.6-luna",
-  provider: {
-    custom: {
-      adapter: "openai",
-      models: {
-        "gpt-5.6-luna": {
-          api: "chat",
-          limit: { context: 128_000, output: 16_384 },
-        },
-      },
-      options: { apiKey: "sk-local", baseURL: "http://localhost:8317/v1" },
-    },
-  },
-};
-
-const { model } = resolveModel(modelSettings);
+const settings = (await SettingsManager.create(process.cwd())).getConfig();
+const { model } = resolveModel(settings);
 
 export const InteractiveMode = () => {
   useInteractiveEvents();
@@ -55,6 +39,7 @@ export const InteractiveMode = () => {
     setDraft("");
 
     const result = streamText({
+      ...settings.generation,
       messages: [...history, { content: v, role: "user" }],
       model,
     });

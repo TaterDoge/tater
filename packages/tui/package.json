@@ -14,8 +14,9 @@
     "@opentui/core": "catalog:",
     "@opentui/keymap": "^0.4.5",
     "@opentui/solid": "^0.4.5",
-    "solid-js": "1.9.12",
+    "@tater/agent-session": "workspace:*",
+    "@tater/ai-adapter": "workspace:*",
     "ai": "catalog:",
-    "@tater/ai-adapter": "workspace:*"
+    "solid-js": "1.9.12"
   }
 }
