@@ -14,14 +14,30 @@ export interface SettingsPaths {
   project: string;
 }
 
+export const SETTINGS_SCHEMA_URL =
+  "https://raw.githubusercontent.com/TaterDoge/tater/main/settings.schema.json";
+
 export const settingsConfigFileSchema = z.strictObject({
-  $schema: z.url().optional(),
-  generation: generationConfigSchema.optional(),
-  model: z.string().min(1).optional(),
-  provider: z.record(z.string().min(1), providerConfigSchema).optional(),
-  smallModel: z.string().min(1).optional(),
-  steeringMode: z.enum(["all", "one-at-a-time"]).optional(),
-  theme: z.string().min(1).optional(),
+  $schema: z
+    .url()
+    .optional()
+    .describe("用于编辑器自动补全和校验的 JSON Schema 地址。"),
+  generation: generationConfigSchema.optional().describe("模型生成参数。"),
+  model: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("默认模型，格式为 provider/model。"),
+  provider: z
+    .record(z.string().min(1), providerConfigSchema)
+    .optional()
+    .describe("Provider 配置，键名为 provider ID。"),
+  smallModel: z.string().min(1).optional().describe("轻量任务使用的模型。"),
+  steeringMode: z
+    .enum(["all", "one-at-a-time"])
+    .optional()
+    .describe("用户消息到达时的任务调度方式。"),
+  theme: z.string().min(1).optional().describe("TUI 主题名称。"),
 });
 
 export const settingsConfigSchema = settingsConfigFileSchema.extend({
@@ -60,7 +76,10 @@ export function getSettingsPaths(
 async function ensureGlobalConfig(path: string): Promise<void> {
   const file = Bun.file(path);
   if (!(await file.exists())) {
-    await Bun.write(path, "{}\n");
+    await Bun.write(
+      path,
+      `${JSON.stringify({ $schema: SETTINGS_SCHEMA_URL }, null, 2)}\n`
+    );
     await chmod(path, 0o600);
   }
 }

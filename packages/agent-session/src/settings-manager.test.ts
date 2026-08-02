@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   getConfigDir,
   mergeConfigFiles,
+  SETTINGS_SCHEMA_URL,
   SettingsManager,
 } from "./settings-manager";
 
@@ -110,7 +111,7 @@ describe("mergeConfigFiles", () => {
 });
 
 describe("SettingsManager", () => {
-  test("全局配置不存在时创建空 JSON 文件", async () => {
+  test("全局配置不存在时创建带 Schema 的 JSON 文件", async () => {
     const root = await createTempDirectory();
     const configPath = join(root, "config", "tater", "settings.json");
 
@@ -123,7 +124,9 @@ describe("SettingsManager", () => {
       }
     );
 
-    expect(await Bun.file(configPath).text()).toBe("{}\n");
+    expect(await Bun.file(configPath).json()).toEqual({
+      $schema: SETTINGS_SCHEMA_URL,
+    });
     expect((await Bun.file(configPath).stat()).mode % 0o1000).toBe(0o600);
   });
 

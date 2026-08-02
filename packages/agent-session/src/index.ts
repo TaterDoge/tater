@@ -4,6 +4,7 @@ export {
   getConfigDir,
   getSettingsPaths,
   mergeConfigFiles,
+  SETTINGS_SCHEMA_URL,
   type SettingsConfig,
   type SettingsConfigFile,
   SettingsManager,

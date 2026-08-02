@@ -16,6 +16,7 @@
   "scripts": {
     "dev": "bun run packages/tui/src/main.tsx",
     "build": "cd packages/tui && bun run build.ts",
+    "generate:settings-schema": "cd packages/agent-session && bun run generate:settings-schema",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test",
     "lint": "biome check",

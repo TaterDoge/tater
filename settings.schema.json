@@ -1,0 +1,762 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "用于编辑器自动补全和校验的 JSON Schema 地址。",
+      "type": "string",
+      "format": "uri"
+    },
+    "generation": {
+      "description": "模型生成参数。",
+      "type": "object",
+      "properties": {
+        "frequencyPenalty": {
+          "type": "number"
+        },
+        "headers": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "maxRetries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "presencePenalty": {
+          "type": "number"
+        },
+        "providerOptions": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/definitions/__schema0"
+            }
+          }
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        "stopSequences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "object",
+              "properties": {
+                "chunkMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "firstChunkMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "stepMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "toolMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "totalMs": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "topK": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "topP": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "model": {
+      "description": "默认模型，格式为 provider/model。",
+      "type": "string",
+      "minLength": 1
+    },
+    "provider": {
+      "description": "Provider 配置，键名为 provider ID。",
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "adapter": {
+                "type": "string",
+                "const": "openai"
+              },
+              "models": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "compat": {
+                      "type": "object",
+                      "properties": {
+                        "maxTokensField": {
+                          "type": "string",
+                          "enum": ["max_tokens", "max_completion_tokens"]
+                        },
+                        "supportsDeveloperRole": {
+                          "type": "boolean"
+                        },
+                        "supportsReasoningEffort": {
+                          "type": "boolean"
+                        },
+                        "supportsStore": {
+                          "type": "boolean"
+                        },
+                        "supportsStrictMode": {
+                          "type": "boolean"
+                        },
+                        "thinkingFormat": {
+                          "type": "string",
+                          "enum": ["openai", "anthropic", "deepseek"]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "cacheRead": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "cacheWrite": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "input": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "output": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "limit": {
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "output": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["context", "output"],
+                      "additionalProperties": false
+                    },
+                    "modalities": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        },
+                        "output": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reasoning": {
+                      "type": "boolean"
+                    },
+                    "thinkingLevelMap": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "minimal",
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          "max"
+                        ]
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "off",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "api": {
+                      "type": "string",
+                      "enum": ["responses", "chat", "completion"]
+                    }
+                  },
+                  "required": ["limit"],
+                  "additionalProperties": false
+                }
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "baseURL": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "headers": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "organization": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "project": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": ["adapter", "models", "options"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "adapter": {
+                "type": "string",
+                "const": "anthropic"
+              },
+              "models": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "compat": {
+                      "type": "object",
+                      "properties": {
+                        "maxTokensField": {
+                          "type": "string",
+                          "enum": ["max_tokens", "max_completion_tokens"]
+                        },
+                        "supportsDeveloperRole": {
+                          "type": "boolean"
+                        },
+                        "supportsReasoningEffort": {
+                          "type": "boolean"
+                        },
+                        "supportsStore": {
+                          "type": "boolean"
+                        },
+                        "supportsStrictMode": {
+                          "type": "boolean"
+                        },
+                        "thinkingFormat": {
+                          "type": "string",
+                          "enum": ["openai", "anthropic", "deepseek"]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "cacheRead": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "cacheWrite": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "input": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "output": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "limit": {
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "output": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["context", "output"],
+                      "additionalProperties": false
+                    },
+                    "modalities": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        },
+                        "output": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reasoning": {
+                      "type": "boolean"
+                    },
+                    "thinkingLevelMap": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "minimal",
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          "max"
+                        ]
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "off",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": ["limit"],
+                  "additionalProperties": false
+                }
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "baseURL": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "headers": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "authToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": ["adapter", "models", "options"],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "adapter": {
+                "type": "string",
+                "const": "openai-compatible"
+              },
+              "models": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "compat": {
+                      "type": "object",
+                      "properties": {
+                        "maxTokensField": {
+                          "type": "string",
+                          "enum": ["max_tokens", "max_completion_tokens"]
+                        },
+                        "supportsDeveloperRole": {
+                          "type": "boolean"
+                        },
+                        "supportsReasoningEffort": {
+                          "type": "boolean"
+                        },
+                        "supportsStore": {
+                          "type": "boolean"
+                        },
+                        "supportsStrictMode": {
+                          "type": "boolean"
+                        },
+                        "thinkingFormat": {
+                          "type": "string",
+                          "enum": ["openai", "anthropic", "deepseek"]
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "cost": {
+                      "type": "object",
+                      "properties": {
+                        "cacheRead": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "cacheWrite": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "input": {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        "output": {
+                          "type": "number",
+                          "minimum": 0
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "limit": {
+                      "type": "object",
+                      "properties": {
+                        "context": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "output": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": ["context", "output"],
+                      "additionalProperties": false
+                    },
+                    "modalities": {
+                      "type": "object",
+                      "properties": {
+                        "input": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        },
+                        "output": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "audio"]
+                          }
+                        }
+                      },
+                      "required": ["input", "output"],
+                      "additionalProperties": false
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reasoning": {
+                      "type": "boolean"
+                    },
+                    "thinkingLevelMap": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "minimal",
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          "max"
+                        ]
+                      },
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "off",
+                              "minimal",
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              "max"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "required": ["limit"],
+                  "additionalProperties": false
+                }
+              },
+              "options": {
+                "type": "object",
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "baseURL": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "headers": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "includeUsage": {
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "queryParams": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  "supportsStructuredOutputs": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["baseURL", "name"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["adapter", "models", "options"],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "smallModel": {
+      "description": "轻量任务使用的模型。",
+      "type": "string",
+      "minLength": 1
+    },
+    "steeringMode": {
+      "description": "用户消息到达时的任务调度方式。",
+      "type": "string",
+      "enum": ["all", "one-at-a-time"]
+    },
+    "theme": {
+      "description": "TUI 主题名称。",
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "__schema0": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/__schema0"
+          }
+        },
+        {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "$ref": "#/definitions/__schema0"
+          }
+        }
+      ]
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/TaterDoge/tater/main/settings.schema.json",
+  "title": "Tater Settings"
+}
